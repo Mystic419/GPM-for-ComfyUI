@@ -94,6 +94,8 @@ All notable user-visible changes should be recorded here.
 - Added debug-only per-image trace writes to sidecars under `gpm_meta.vlm_scan_debug_trace` (image path/hash, output path, prompt sent, raw response, parsed prompts).
 - Added lightweight debug guard: when debug mode is ON and a response looks like generic family/living-room text for a likely different image type, scanner warns and skips overwriting existing sidecar JSON for that image.
 - Internal scanner now blocks unvalidated internal multimodal families (including Gliese/Qwen3.x variants) from running scan writes; only Qwen2.5-VL is currently approved for internal scan correctness.
+- Startup dependency diagnostics now probe GPM internal support imports package-locally first (with absolute fallback), fixing false `MISSING` reports for `gpm_vlm_internal_multimodal` in package-based ComfyUI installs.
+- Startup dependency diagnostics now print one concise internal-support detail line on import failure (without traceback spam).
 
 ### Removed
 - `GPM Install Dependencies` node and its registration from node mappings.

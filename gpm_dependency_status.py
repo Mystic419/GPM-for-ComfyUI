@@ -33,6 +33,23 @@ def probe_import(module_name: str) -> ImportProbeResult:
     return ImportProbeResult(ok=True, error="", module=module)
 
 
+def probe_package_local_import(module_name: str, package_name: str) -> ImportProbeResult:
+    normalized_package = str(package_name or "").strip()
+    if not normalized_package:
+        return probe_import(module_name)
+
+    # Prefer package-local resolution for GPM internal modules, but keep an
+    # absolute fallback for environments that expose modules at top level.
+    try:
+        module = importlib.import_module(f".{module_name}", package=normalized_package)
+        return ImportProbeResult(ok=True, error="", module=module)
+    except Exception as rel_exc:  # pragma: no cover - import errors are environment dependent.
+        absolute_probe = probe_import(module_name)
+        if absolute_probe.ok:
+            return absolute_probe
+        return ImportProbeResult(ok=False, error=str(rel_exc), module=None)
+
+
 def llama_cpp_version(llama_cpp_module: object | None) -> str:
     if llama_cpp_module is None:
         return ""
@@ -91,7 +108,7 @@ def compute_startup_readiness(
 def collect_dependency_status() -> GPMDependencyStatus:
     pillow_probe = probe_import("PIL")
     llama_probe = probe_import("llama_cpp")
-    internal_probe = probe_import(INTERNAL_SUPPORT_MODULE)
+    internal_probe = probe_package_local_import(INTERNAL_SUPPORT_MODULE, __package__ or "")
     readiness = compute_startup_readiness(
         pillow_import_ok=pillow_probe.ok,
         llama_cpp_import_ok=llama_probe.ok,
@@ -120,4 +137,6 @@ def print_startup_diagnostics() -> None:
         f"[GPM startup] Internal support import ({INTERNAL_SUPPORT_MODULE}): "
         f"{_probe_status_text(status.internal_support)}"
     )
+    if not status.internal_support.ok:
+        print(f"[GPM startup] Internal support detail: {status.internal_support.error}")
     print(f"[GPM startup] Internal scanner readiness: {status.readiness}")
