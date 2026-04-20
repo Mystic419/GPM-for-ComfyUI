@@ -59,8 +59,8 @@ All notable user-visible changes should be recorded here.
 - Installer flow now matches standard ComfyUI llama/VLM custom-node expectations:
   - no in-UI installer node
   - no startup auto-install behavior
-  - `install.py` handles wheel-first `llama-cpp-python` installation only when `llama_cpp` is missing
-  - CUDA path uses cuBLAS wheel index strategy; CPU path uses release wheel URL strategy
+  - `install.py` handles special `llama-cpp-python` installation only when `llama_cpp` is missing
+  - CUDA path tries the cuBLAS wheel index strategy, then falls back to standard `pip install --upgrade llama-cpp-python`
 - Startup diagnostics remain lightweight and non-invasive, but no longer depend on install-state markers.
 - Install/docs positioning is now explicit:
   - ComfyUI Manager is the supported install path

@@ -23,10 +23,8 @@
 ### Installer behavior
 - `install.py` checks `import llama_cpp` first.
   - if already importable, installer prints status and exits without reinstalling
-  - if missing, installer uses a wheel-first strategy aligned with common ComfyUI llama/VLM node patterns:
-    - CUDA/cuBLAS wheel index path when CUDA is applicable (`jllllll` cuBLAS wheel index family)
-    - CPU release-wheel URL path from `abetlen/llama-cpp-python` releases otherwise
-  - if wheel installs fail, installer falls back to plain `pip install llama-cpp-python`
+  - if missing, installer can try a CUDA/cuBLAS wheel index path when CUDA is applicable (`jllllll` cuBLAS wheel index family)
+  - if CUDA wheel install fails (or CUDA is not used), installer falls back to plain `pip install --upgrade llama-cpp-python`
 - `requirements.txt` is intentionally minimal and does not include `llama-cpp-python`.
 - llama install mode can be overridden with:
   - `GPM_LLAMA_INSTALL_MODE=auto` (default)

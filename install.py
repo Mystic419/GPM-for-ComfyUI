@@ -2,24 +2,17 @@
 
 import importlib.util
 import importlib
-import json
 import os
 import platform
-import re
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REQUIREMENTS_PATH = SCRIPT_DIR / "requirements.txt"
 LLAMA_IMPORT_NAME = "llama_cpp"
 LLAMA_PIP_NAME = "llama-cpp-python"
-LLAMA_GITHUB_LATEST_API = "https://api.github.com/repos/abetlen/llama-cpp-python/releases/latest"
-LLAMA_GITHUB_RELEASE_BASE = "https://github.com/abetlen/llama-cpp-python/releases/download"
 LLAMA_CUBLAS_INDEX_BASE = "https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels"
-DEFAULT_LLAMA_VERSION = "0.2.26"
 INSTALL_MODE_ENV = "GPM_LLAMA_INSTALL_MODE"
 INSTALL_MODE_AUTO = "auto"
 INSTALL_MODE_CPU = "cpu"
@@ -129,37 +122,6 @@ def _detect_avx_folder() -> str:
     return "AVX"
 
 
-def _preferred_wheel_tags(limit: int = 12) -> list[str]:
-    try:
-        from packaging import tags  # type: ignore
-
-        selected: list[str] = []
-        for tag in tags.sys_tags():
-            selected.append(f"{tag.interpreter}-{tag.abi}-{tag.platform}")
-            if len(selected) >= limit:
-                break
-        return selected
-    except Exception:
-        return []
-
-
-def _latest_llama_version() -> str:
-    try:
-        request = urllib.request.Request(
-            LLAMA_GITHUB_LATEST_API,
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "gpm-installer"},
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8", errors="replace"))
-        raw_tag = str(payload.get("tag_name", "")).strip()
-        normalized = raw_tag.removeprefix("v")
-        if re.fullmatch(r"\d+\.\d+\.\d+", normalized):
-            return normalized
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError):
-        pass
-    return DEFAULT_LLAMA_VERSION
-
-
 def _install_llama_cuda(cuda_tag: str, avx_folder: str) -> bool:
     index_url = f"{LLAMA_CUBLAS_INDEX_BASE}/{avx_folder}/{cuda_tag}"
     _log(f"Trying CUDA/cuBLAS wheel index: {index_url}")
@@ -170,24 +132,6 @@ def _install_llama_cuda(cuda_tag: str, avx_folder: str) -> bool:
         LLAMA_PIP_NAME,
         f"--index-url={index_url}",
     ])
-
-
-def _install_llama_cpu(version: str) -> bool:
-    wheel_tags = _preferred_wheel_tags()
-    if not wheel_tags:
-        _log("Could not determine packaging tags; skipping direct CPU wheel URL attempts.")
-        return False
-
-    release_base = f"{LLAMA_GITHUB_RELEASE_BASE}/v{version}"
-    _log(f"Trying CPU wheel URLs from release v{version}")
-    for wheel_tag in wheel_tags:
-        wheel_url = f"{release_base}/llama_cpp_python-{version}-{wheel_tag}.whl"
-        _log(f"Trying wheel: {wheel_tag}")
-        if _pip_install(["--upgrade", "--force-reinstall", "--no-deps", wheel_url]):
-            return True
-
-    _log("CPU wheel URL attempts failed.")
-    return False
 
 
 def _install_llama_fallback() -> bool:
@@ -228,14 +172,9 @@ def main() -> int:
         if use_cuda and cuda_tag:
             installed = _install_llama_cuda(cuda_tag=cuda_tag, avx_folder=avx_folder)
             if not installed:
-                _log("CUDA wheel install failed; will try CPU wheel strategy.")
+                _log("CUDA wheel install failed; falling back to standard pip install.")
         elif use_cuda and not cuda_tag:
-            _log("CUDA mode requested but CUDA version tag is unavailable; falling back to CPU wheel strategy.")
-
-        if not installed:
-            version = _latest_llama_version()
-            _log(f"Using llama-cpp-python release version: {version}")
-            installed = _install_llama_cpu(version=version)
+            _log("CUDA mode requested but CUDA version tag is unavailable; using standard pip install.")
 
         if not installed:
             installed = _install_llama_fallback()

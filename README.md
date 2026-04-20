@@ -205,10 +205,8 @@ python .\scripts\migrate_prompt_keys.py <your_image_root>
 - `llama-cpp-python` is intentionally not listed in `requirements.txt` and is handled as a special-case install in `install.py`.
 - `install.py` checks `import llama_cpp` first:
   - if already installed, it does not reinstall
-  - if missing, it uses wheel-first logic aligned with ComfyUI llama/VLM node conventions:
-    - CUDA/cuBLAS index path when CUDA is applicable
-    - CPU release-wheel URL path otherwise
-  - if wheel attempts fail, it falls back to plain pip install as a final fallback
+  - if missing, it can try CUDA/cuBLAS index path when CUDA is applicable
+  - if CUDA wheel install fails (or CUDA is not used), it falls back to plain `pip install --upgrade llama-cpp-python`
 - optional install mode override is available with `GPM_LLAMA_INSTALL_MODE` (`auto`, `cpu`, `cuda`).
 - on GPM module import, startup diagnostics print dependency status (`Pillow`, `llama_cpp`, internal support import, readiness) without running pip.
 - Manager installs should normally not require manual commands; `install.py` remains available for special `llama-cpp-python` wheel handling when needed.
