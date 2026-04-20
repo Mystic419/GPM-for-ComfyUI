@@ -1,0 +1,59 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Env
+.env
+.env.*
+
+# Coverage
+coverage/
+.coverage
+htmlcov/
+
+# Local patch/temp artifacts
+.tmp_*.diff
+.tmp_refs/
+
+# Local session notes (non-durable)
+docs/sessions/
+AGENTS.md
+PROJECT_RULES.md
+TASKS.md
+docs/decisions.md
+docs/troubleshooting.md
+scripts/new-session-note.ps1
+scripts/update-docs-check.ps1
+
+# Local/large AI artifacts
+*.gguf
+*.safetensors
+*.ckpt
+models/
+input/
+output/
+temp/
+cache/
