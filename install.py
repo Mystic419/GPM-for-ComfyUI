@@ -6,6 +6,8 @@ import os
 import platform
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -26,18 +28,92 @@ def _log(message: str) -> None:
     print(f"[GPM install] {message}")
 
 
-def _run(args: list[str], env: dict[str, str] | None = None) -> bool:
+def _format_elapsed(seconds: float) -> str:
+    total = max(0, int(seconds))
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    secs = total % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def _extract_failure_detail(lines: list[str], returncode: int) -> str:
+    detail_lines = [line.strip() for line in lines if line and line.strip()]
+    error_lines = [line for line in detail_lines if "error" in line.casefold()]
+    if error_lines:
+        return error_lines[-1]
+    if detail_lines:
+        return detail_lines[-1]
+    return f"pip exited with code {returncode}"
+
+
+def _run(
+    args: list[str],
+    env: dict[str, str] | None = None,
+    stream_output: bool = False,
+    heartbeat_message: str | None = None,
+    heartbeat_interval_seconds: int = 25,
+) -> tuple[bool, str]:
     _log(f"Running: {' '.join(args)}")
-    completed = subprocess.run(args, check=False, env=env)
-    if completed.returncode == 0:
-        return True
-    _log(f"Command failed (exit={completed.returncode})")
-    return False
+    if not stream_output:
+        completed = subprocess.run(args, check=False, env=env)
+        if completed.returncode == 0:
+            return True, ""
+        _log(f"Command failed (exit={completed.returncode})")
+        return False, f"pip exited with code {completed.returncode}"
+
+    started_at = time.time()
+    recent_lines: list[str] = []
+    stop_heartbeat = threading.Event()
+
+    def _heartbeat() -> None:
+        while not stop_heartbeat.wait(max(1, heartbeat_interval_seconds)):
+            elapsed = _format_elapsed(time.time() - started_at)
+            if heartbeat_message:
+                _log(heartbeat_message)
+            _log(f"elapsed: {elapsed}")
+
+    heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
+    heartbeat_thread.start()
+
+    try:
+        process = subprocess.Popen(
+            args,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+    except Exception as exc:
+        stop_heartbeat.set()
+        heartbeat_thread.join(timeout=1.0)
+        _log(f"Command failed to start: {exc}")
+        return False, str(exc)
+
+    assert process.stdout is not None
+    for line in process.stdout:
+        print(line, end="")
+        stripped = line.strip()
+        if stripped:
+            recent_lines.append(stripped)
+            if len(recent_lines) > 300:
+                recent_lines = recent_lines[-300:]
+
+    process.wait()
+    stop_heartbeat.set()
+    heartbeat_thread.join(timeout=1.0)
+
+    if process.returncode == 0:
+        return True, ""
+
+    _log(f"Command failed (exit={process.returncode})")
+    return False, _extract_failure_detail(recent_lines, process.returncode)
 
 
 def _pip_install(args: list[str], env: dict[str, str] | None = None) -> bool:
     cmd = [sys.executable, "-m", "pip", "--disable-pip-version-check", "install", *args]
-    return _run(cmd, env=env)
+    ok, _ = _run(cmd, env=env)
+    return ok
 
 
 def _read_install_mode() -> str:
@@ -137,6 +213,9 @@ def _install_llama_cuda(cuda_tag: str, avx_folder: str) -> bool:
 
 def _install_llama_cuda_source_build() -> tuple[bool, str]:
     _log("No usable prebuilt CUDA wheel was found for this system.")
+    _log("local CUDA build started")
+    _log("this may take several minutes")
+    _log("the window may appear quiet between compiler steps")
     _log("Attempting local CUDA source build for llama-cpp-python (this may take a few minutes).")
     _log("If CUDA build fails, installer will continue with CPU fallback.")
 
@@ -159,17 +238,19 @@ def _install_llama_cuda_source_build() -> tuple[bool, str]:
         "--no-binary=llama-cpp-python",
         LLAMA_PIP_NAME,
     ]
-    _log(f"Running: {' '.join(cmd)}")
-    completed = subprocess.run(cmd, check=False, env=env, text=True, capture_output=True)
-    if completed.returncode == 0:
+    started_at = time.time()
+    ok, detail = _run(
+        cmd,
+        env=env,
+        stream_output=True,
+        heartbeat_message="still building llama-cpp-python from source...",
+        heartbeat_interval_seconds=25,
+    )
+    elapsed = _format_elapsed(time.time() - started_at)
+    if ok:
+        _log(f"local CUDA build finished in {elapsed}")
         return True, ""
-
-    stderr = str(completed.stderr or "").strip()
-    stdout = str(completed.stdout or "").strip()
-    detail_source = stderr if stderr else stdout
-    detail_lines = [line.strip() for line in detail_source.splitlines() if line.strip()]
-    error_lines = [line for line in detail_lines if "error" in line.casefold()]
-    detail = error_lines[-1] if error_lines else (detail_lines[-1] if detail_lines else f"pip exited with code {completed.returncode}")
+    _log(f"local CUDA build failed after {elapsed}")
     return False, detail
 
 
