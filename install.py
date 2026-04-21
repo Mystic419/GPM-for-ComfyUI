@@ -13,6 +13,7 @@ REQUIREMENTS_PATH = SCRIPT_DIR / "requirements.txt"
 LLAMA_IMPORT_NAME = "llama_cpp"
 LLAMA_PIP_NAME = "llama-cpp-python"
 LLAMA_CUBLAS_INDEX_BASE = "https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels"
+SUPPORTED_CUDA_WHEEL_TAGS = {"cu121", "cu122", "cu123", "cu124", "cu125"}
 INSTALL_MODE_ENV = "GPM_LLAMA_INSTALL_MODE"
 INSTALL_MODE_AUTO = "auto"
 INSTALL_MODE_CPU = "cpu"
@@ -25,18 +26,18 @@ def _log(message: str) -> None:
     print(f"[GPM install] {message}")
 
 
-def _run(args: list[str]) -> bool:
+def _run(args: list[str], env: dict[str, str] | None = None) -> bool:
     _log(f"Running: {' '.join(args)}")
-    completed = subprocess.run(args, check=False)
+    completed = subprocess.run(args, check=False, env=env)
     if completed.returncode == 0:
         return True
     _log(f"Command failed (exit={completed.returncode})")
     return False
 
 
-def _pip_install(args: list[str]) -> bool:
+def _pip_install(args: list[str], env: dict[str, str] | None = None) -> bool:
     cmd = [sys.executable, "-m", "pip", "--disable-pip-version-check", "install", *args]
-    return _run(cmd)
+    return _run(cmd, env=env)
 
 
 def _read_install_mode() -> str:
@@ -134,9 +135,70 @@ def _install_llama_cuda(cuda_tag: str, avx_folder: str) -> bool:
     ])
 
 
+def _install_llama_cuda_source_build() -> tuple[bool, str]:
+    _log("No usable prebuilt CUDA wheel was found for this system.")
+    _log("Attempting local CUDA source build for llama-cpp-python (this may take a few minutes).")
+    _log("If CUDA build fails, installer will continue with CPU fallback.")
+
+    env = os.environ.copy()
+    existing_cmake_args = str(env.get("CMAKE_ARGS", "") or "").strip()
+    cuda_flag = "-DGGML_CUDA=on"
+    if cuda_flag not in existing_cmake_args:
+        env["CMAKE_ARGS"] = f"{existing_cmake_args} {cuda_flag}".strip()
+    env["FORCE_CMAKE"] = "1"
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "pip",
+        "--disable-pip-version-check",
+        "install",
+        "--upgrade",
+        "--force-reinstall",
+        "--no-cache-dir",
+        "--no-binary=llama-cpp-python",
+        LLAMA_PIP_NAME,
+    ]
+    _log(f"Running: {' '.join(cmd)}")
+    completed = subprocess.run(cmd, check=False, env=env, text=True, capture_output=True)
+    if completed.returncode == 0:
+        return True, ""
+
+    stderr = str(completed.stderr or "").strip()
+    stdout = str(completed.stdout or "").strip()
+    detail_source = stderr if stderr else stdout
+    detail_lines = [line.strip() for line in detail_source.splitlines() if line.strip()]
+    error_lines = [line for line in detail_lines if "error" in line.casefold()]
+    detail = error_lines[-1] if error_lines else (detail_lines[-1] if detail_lines else f"pip exited with code {completed.returncode}")
+    return False, detail
+
+
 def _install_llama_fallback() -> bool:
     _log("Falling back to plain pip install for llama-cpp-python.")
     return _pip_install(["--upgrade", LLAMA_PIP_NAME])
+
+
+def _probe_llama_capabilities() -> tuple[str, str]:
+    try:
+        import llama_cpp  # type: ignore
+    except Exception as exc:
+        return "<unknown>", f"not importable ({exc})"
+
+    version = str(getattr(llama_cpp, "__version__", "") or "").strip() or "<unknown>"
+
+    try:
+        probe = getattr(llama_cpp, "llama_supports_gpu_offload", None)
+        if callable(probe):
+            return version, "CUDA capable (llama_supports_gpu_offload=yes)" if probe() else "CPU only (llama_supports_gpu_offload=no)"
+
+        inner = getattr(llama_cpp, "llama_cpp", None)
+        inner_probe = getattr(inner, "llama_supports_gpu_offload", None)
+        if callable(inner_probe):
+            return version, "CUDA capable (llama_cpp.llama_supports_gpu_offload=yes)" if inner_probe() else "CPU only (llama_cpp.llama_supports_gpu_offload=no)"
+
+        return version, "unknown (GPU capability probe unavailable)"
+    except Exception as exc:
+        return version, f"unknown (GPU capability probe failed: {exc})"
 
 
 def main() -> int:
@@ -170,9 +232,20 @@ def main() -> int:
 
         installed = False
         if use_cuda and cuda_tag:
-            installed = _install_llama_cuda(cuda_tag=cuda_tag, avx_folder=avx_folder)
+            if cuda_tag in SUPPORTED_CUDA_WHEEL_TAGS:
+                _log(f"Detected CUDA tag '{cuda_tag}' is in supported prebuilt wheel families.")
+                installed = _install_llama_cuda(cuda_tag=cuda_tag, avx_folder=avx_folder)
+                if not installed:
+                    _log("CUDA wheel install failed; attempting CUDA source build before CPU fallback.")
+            else:
+                _log(f"Detected CUDA tag '{cuda_tag}' is outside supported prebuilt wheel families ({', '.join(sorted(SUPPORTED_CUDA_WHEEL_TAGS))}).")
+
             if not installed:
-                _log("CUDA wheel install failed; falling back to standard pip install.")
+                source_ok, source_error = _install_llama_cuda_source_build()
+                installed = source_ok
+                if not source_ok:
+                    _log(f"CUDA source build failed: {source_error}")
+                    _log("Continuing with CPU fallback install; CPU mode may be slower.")
         elif use_cuda and not cuda_tag:
             _log("CUDA mode requested but CUDA version tag is unavailable; using standard pip install.")
 
@@ -185,6 +258,9 @@ def main() -> int:
         else:
             _log("llama_cpp is still not importable after install attempts.")
             return 1
+
+    detected_version, capability = _probe_llama_capabilities()
+    _log(f"llama_cpp post-install probe: version={detected_version}, capability={capability}")
 
     internal_ok, internal_error = _probe_internal_support()
     _log(f"Internal support import ({INTERNAL_SUPPORT_MODULE}): {'OK' if internal_ok else 'FAILED'}")
