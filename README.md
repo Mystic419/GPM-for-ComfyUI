@@ -145,6 +145,9 @@ Global preset storage:
 - auto-created if missing
 - built-ins are read-only defaults
 - user presets are supported as global recipes and are not duplicated into image sidecars
+- built-in ids: `builtin-sdxl`, `builtin-pony`, `builtin-natural-language`
+- managed user preset ids: `sdxl_user`, `pony_user`, `natural_user` (auto-created from matching built-ins if missing)
+- preset schema includes `system_prompt`, `ban_list`, `temperature`, `top_p`, `max_tokens`
 
 ## Prototype operation model (v1)
 `GPM Gallery Browser` uses node controls for navigation:

@@ -24,6 +24,7 @@ from .gpm_vlm_scanner_node import (
     _write_scan_report,
 )
 from .gpm_vlm_presets import GPMVLMPresetStore
+from .gpm_vlm_presets import get_preset_generation_settings
 
 
 _INTERNAL_STARTUP_ERROR_PREFIXES = (
@@ -92,9 +93,9 @@ def _run_internal_scan(
     timeout_seconds: int,
     n_ctx: int,
     n_gpu_layers: int,
-    temperature: float,
-    top_p: float,
-    max_tokens: int,
+    temperature: float | None,
+    top_p: float | None,
+    max_tokens: int | None,
     threads: int,
     batch_size: int,
     keep_model_loaded: bool,
@@ -112,6 +113,10 @@ def _run_internal_scan(
             "mmproj_name is required for internal GGUF mode. Use auto-pair or select manually.",
         )
     else:
+        preset_temperature, preset_top_p, preset_max_tokens = get_preset_generation_settings(preset)
+        effective_temperature = preset_temperature if temperature is None else float(temperature)
+        effective_top_p = preset_top_p if top_p is None else float(top_p)
+        effective_max_tokens = preset_max_tokens if max_tokens is None else int(max_tokens)
         summary = scan_images_with_preset(
             root_folder=root_folder,
             preset=preset,
@@ -125,9 +130,9 @@ def _run_internal_scan(
             internal_mmproj_name=mmproj_name,
             internal_n_ctx=n_ctx,
             internal_n_gpu_layers=n_gpu_layers,
-            internal_temperature=temperature,
-            internal_top_p=top_p,
-            internal_max_tokens=max_tokens,
+            internal_temperature=effective_temperature,
+            internal_top_p=effective_top_p,
+            internal_max_tokens=effective_max_tokens,
             internal_threads=threads,
             internal_batch_size=batch_size,
             internal_keep_model_loaded=keep_model_loaded,
@@ -198,9 +203,9 @@ class GPMVLMScannerInternal:
             timeout_seconds=timeout_seconds,
             n_ctx=4096,
             n_gpu_layers=-1,
-            temperature=0.2,
-            top_p=0.95,
-            max_tokens=512,
+            temperature=None,
+            top_p=None,
+            max_tokens=None,
             threads=0,
             batch_size=512,
             keep_model_loaded=False,
@@ -230,8 +235,8 @@ class GPMVLMScannerInternalAdvanced:
                 "n_ctx": ("INT", {"default": 4096, "min": 256, "max": 32768, "step": 256}),
                 "n_gpu_layers": ("INT", {"default": -1, "min": -1, "max": 200, "step": 1}),
                 "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "top_p": ("FLOAT", {"default": 0.95, "min": 0.01, "max": 1.0, "step": 0.01}),
-                "max_tokens": ("INT", {"default": 512, "min": 32, "max": 4096, "step": 1}),
+                "top_p": ("FLOAT", {"default": 0.95, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "max_tokens": ("INT", {"default": 512, "min": 32, "max": 2048, "step": 1}),
                 "threads": ("INT", {"default": 0, "min": 0, "max": 128, "step": 1}),
                 "batch_size": ("INT", {"default": 512, "min": 32, "max": 8192, "step": 32}),
                 "keep_model_loaded": (["OFF", "ON"], {"default": "OFF"}),

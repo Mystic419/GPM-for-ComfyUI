@@ -281,7 +281,7 @@ def _build_runtime(
             n_gpu_layers=int(internal_n_gpu_layers),
             temperature=float(internal_temperature),
             top_p=float(internal_top_p),
-            max_tokens=max(32, int(internal_max_tokens)),
+            max_tokens=min(2048, max(32, int(internal_max_tokens))),
             threads=int(internal_threads),
             batch_size=max(32, int(internal_batch_size)),
             keep_model_loaded=bool(internal_keep_model_loaded),

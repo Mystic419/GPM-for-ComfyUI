@@ -96,6 +96,8 @@ All notable user-visible changes should be recorded here.
 - Internal scanner now blocks unvalidated internal multimodal families (including Gliese/Qwen3.x variants) from running scan writes; only Qwen2.5-VL is currently approved for internal scan correctness.
 - Startup dependency diagnostics now probe GPM internal support imports package-locally first (with absolute fallback), fixing false `MISSING` reports for `gpm_vlm_internal_multimodal` in package-based ComfyUI installs.
 - Startup dependency diagnostics now print one concise internal-support detail line on import failure (without traceback spam).
+- Managed global user preset ids (`sdxl_user`, `pony_user`, `natural_user`) that auto-initialize from matching built-ins when missing.
+- Preset generation setting coverage for `temperature`, `top_p`, and `max_tokens` with validation/clamping.
 
 ### Removed
 - `GPM Install Dependencies` node and its registration from node mappings.

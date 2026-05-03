@@ -14,6 +14,15 @@ FAMILY_SDXL = "SDXL"
 FAMILY_PONY = "Pony"
 FAMILY_NATURAL = "Natural Language"
 ALLOWED_FAMILIES = (FAMILY_SDXL, FAMILY_PONY, FAMILY_NATURAL)
+USER_PRESET_IDS_BY_FAMILY = {
+    FAMILY_SDXL: "sdxl_user",
+    FAMILY_PONY: "pony_user",
+    FAMILY_NATURAL: "natural_user",
+}
+
+GENERATION_TEMPERATURE_DEFAULT = 0.2
+GENERATION_TOP_P_DEFAULT = 0.95
+GENERATION_MAX_TOKENS_DEFAULT = 512
 
 
 def _now_iso_utc() -> str:
@@ -36,18 +45,23 @@ def _default_builtin_presets() -> list[dict[str, Any]]:
             "name": "SDXL",
             "family": FAMILY_SDXL,
             "system_prompt": (
-                "You are a prompt extraction assistant for SDXL workflows. "
+                "You are a prompt extraction assistant for SDXL workflows using Qwen2.5-VL. "
                 "Return strict JSON only with exactly two string keys: person_prompt and scene_prompt. "
                 "If there is no clear visible main person/character/subject, person_prompt must be an empty string. "
                 "If there is no clear scene/background/environment, scene_prompt must be an empty string. "
-                "person_prompt: describe only a visible main person/character/subject. "
+                "Describe only what is actually visible in the input image. Do not guess hidden details, unseen body parts, identity, age, profession, or story context. "
+                "person_prompt: describe only a visible main person/character/subject with concrete visible details such as apparent gender presentation, hairstyle, clothing, accessories, pose, facial expression, camera distance, and view angle. "
                 "Do not include environment, room, architecture, street, furniture, decor, lighting, or background details in person_prompt. "
-                "scene_prompt: describe only environment, background, lighting, and composition; do not include person traits when no clear person is present. "
-                "Keep both outputs concise, comma-separated, generation-friendly, modular, and reusable. "
+                "scene_prompt: describe only environment, background, lighting, weather, time-of-day cues, composition, depth, and camera framing; do not include person traits when no clear person is present. "
+                "Keep both outputs moderately detailed, comma-separated, generation-friendly, modular, and reusable. "
+                "Prefer 12-40 descriptive tags/phrases per field when useful instead of very short outputs. "
                 "Avoid full sentences. Avoid quality tags. Avoid negative prompts. "
                 "Avoid clutter props unless essential to the subject or scene."
             ),
             "ban_list": [],
+            "temperature": GENERATION_TEMPERATURE_DEFAULT,
+            "top_p": GENERATION_TOP_P_DEFAULT,
+            "max_tokens": GENERATION_MAX_TOKENS_DEFAULT,
             "validated_model_name": RECOMMENDED_GGUF_MODEL_REPO,
             "is_builtin": True,
             "created_at": now,
@@ -58,18 +72,23 @@ def _default_builtin_presets() -> list[dict[str, Any]]:
             "name": "Pony",
             "family": FAMILY_PONY,
             "system_prompt": (
-                "You are a prompt extraction assistant for Pony-style prompting. "
+                "You are a prompt extraction assistant for Pony-style prompting using Qwen2.5-VL. "
                 "Return strict JSON only with exactly two string keys: person_prompt and scene_prompt. "
                 "If there is no clear visible main person/character/subject, person_prompt must be an empty string. "
                 "If there is no clear scene/background/environment, scene_prompt must be an empty string. "
-                "Use short descriptive tags suitable for Pony workflows. "
-                "person_prompt: focus on a visible character's traits, outfit, pose, and expression only. "
+                "Describe only what is actually visible in the input image. Do not invent lore, character names, personality, or unseen details. "
+                "Use Pony-friendly descriptive tags/phrases suitable for reuse. "
+                "person_prompt: focus on a visible character's traits, outfit details, hair, accessories, pose, expression, and camera framing only. "
                 "Do not include environment, room, architecture, street, furniture, decor, lighting, or background details in person_prompt. "
                 "scene_prompt: focus on setting, background, lighting, and composition only; do not include person traits when no clear person is present. "
-                "Keep outputs concise and reusable. Avoid full sentences. "
+                "Keep outputs moderately detailed and reusable. Prefer rich tag groups over minimal one-liners. Avoid full sentences. "
+                "Prefer 12-40 descriptive tags/phrases per field when useful. "
                 "Avoid quality tags. Avoid negative prompts. Avoid clutter props unless essential."
             ),
             "ban_list": [],
+            "temperature": GENERATION_TEMPERATURE_DEFAULT,
+            "top_p": GENERATION_TOP_P_DEFAULT,
+            "max_tokens": GENERATION_MAX_TOKENS_DEFAULT,
             "validated_model_name": RECOMMENDED_GGUF_MODEL_REPO,
             "is_builtin": True,
             "created_at": now,
@@ -80,18 +99,24 @@ def _default_builtin_presets() -> list[dict[str, Any]]:
             "name": "Natural Language",
             "family": FAMILY_NATURAL,
             "system_prompt": (
-                "You are a prompt extraction assistant for natural-language prompting. "
+                "You are a prompt extraction assistant for natural-language prompting using Qwen2.5-VL. "
                 "Return strict JSON only with exactly two string keys: person_prompt and scene_prompt. "
                 "If there is no clear visible main person/character/subject, person_prompt must be an empty string. "
                 "If there is no clear scene/background/environment, scene_prompt must be an empty string. "
-                "Use short natural-language phrases instead of tag soup. "
-                "person_prompt: describe only a visible subject/person. "
+                "Describe only what is actually visible in the image. Do not hallucinate identity, biography, intentions, or unseen events. "
+                "Use natural-language prompt fragments instead of dense tag soup. "
+                "person_prompt: describe only a visible subject/person with concrete visible attributes, clothing, pose, expression, and framing. "
                 "Do not include environment, room, architecture, street, furniture, decor, lighting, or background details in person_prompt. "
                 "scene_prompt: describe only setting, background, lighting, and composition; do not include person traits when no clear person is present. "
-                "Keep outputs compact and reusable. Avoid full sentences where possible. "
+                "Keep outputs moderately detailed and reusable, using short phrase clauses rather than long prose. "
+                "Prefer 2-6 compact phrase clauses per field when useful. "
+                "Avoid full narrative sentences where possible. "
                 "Avoid quality tags. Avoid negative prompts. Avoid clutter props unless essential."
             ),
             "ban_list": [],
+            "temperature": GENERATION_TEMPERATURE_DEFAULT,
+            "top_p": GENERATION_TOP_P_DEFAULT,
+            "max_tokens": GENERATION_MAX_TOKENS_DEFAULT,
             "validated_model_name": RECOMMENDED_GGUF_MODEL_REPO,
             "is_builtin": True,
             "created_at": now,
@@ -101,7 +126,7 @@ def _default_builtin_presets() -> list[dict[str, Any]]:
 
 
 def _default_payload() -> dict[str, Any]:
-    return {"version": 1, "presets": _default_builtin_presets()}
+    return {"version": 1, "presets": _merge_with_required_builtins(_default_builtin_presets())}
 
 
 def _normalize_preset(raw: Any) -> dict[str, Any] | None:
@@ -116,17 +141,83 @@ def _normalize_preset(raw: Any) -> dict[str, Any] | None:
 
     created_at = str(raw.get("created_at", "")).strip() or _now_iso_utc()
     updated_at = str(raw.get("updated_at", "")).strip() or _now_iso_utc()
+    extras = {str(k): v for k, v in raw.items() if str(k) not in {
+        "id",
+        "name",
+        "family",
+        "system_prompt",
+        "ban_list",
+        "validated_model_name",
+        "is_builtin",
+        "created_at",
+        "updated_at",
+        "temperature",
+        "top_p",
+        "max_tokens",
+    }}
+    temperature, top_p, max_tokens = get_preset_generation_settings(raw)
     return {
         "id": preset_id,
         "name": name,
         "family": family,
         "system_prompt": str(raw.get("system_prompt", "")).strip(),
         "ban_list": _normalize_ban_list(raw.get("ban_list", [])),
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_tokens,
         "validated_model_name": str(raw.get("validated_model_name", "")).strip(),
         "is_builtin": bool(raw.get("is_builtin", False)),
         "created_at": created_at,
         "updated_at": updated_at,
+        **extras,
     }
+
+
+def _clamp_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed < minimum:
+        return minimum
+    if parsed > maximum:
+        return maximum
+    return parsed
+
+
+def _clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed < minimum:
+        return minimum
+    if parsed > maximum:
+        return maximum
+    return parsed
+
+
+def get_preset_generation_settings(preset: dict[str, Any] | None) -> tuple[float, float, int]:
+    data = preset if isinstance(preset, dict) else {}
+    temperature = _clamp_float(
+        data.get("temperature", GENERATION_TEMPERATURE_DEFAULT),
+        GENERATION_TEMPERATURE_DEFAULT,
+        0.0,
+        2.0,
+    )
+    top_p = _clamp_float(
+        data.get("top_p", GENERATION_TOP_P_DEFAULT),
+        GENERATION_TOP_P_DEFAULT,
+        0.0,
+        1.0,
+    )
+    max_tokens = _clamp_int(
+        data.get("max_tokens", GENERATION_MAX_TOKENS_DEFAULT),
+        GENERATION_MAX_TOKENS_DEFAULT,
+        32,
+        2048,
+    )
+    return temperature, top_p, max_tokens
 
 
 def _merge_with_required_builtins(presets: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -142,11 +233,43 @@ def _merge_with_required_builtins(presets: list[dict[str, Any]]) -> list[dict[st
         existing["name"] = builtin["name"]
         existing["system_prompt"] = builtin["system_prompt"]
         existing["ban_list"] = list(builtin["ban_list"])
+        existing["temperature"] = builtin["temperature"]
+        existing["top_p"] = builtin["top_p"]
+        existing["max_tokens"] = builtin["max_tokens"]
         existing["validated_model_name"] = str(builtin.get("validated_model_name", "")).strip()
         merged.append(existing)
 
     for preset in by_id.values():
         merged.append(preset)
+
+    by_id_merged = {str(item.get("id", "")): item for item in merged if isinstance(item, dict)}
+    for family, user_id in USER_PRESET_IDS_BY_FAMILY.items():
+        if user_id in by_id_merged:
+            continue
+        builtin_id = {
+            FAMILY_SDXL: "builtin-sdxl",
+            FAMILY_PONY: "builtin-pony",
+            FAMILY_NATURAL: "builtin-natural-language",
+        }[family]
+        source = by_id_merged.get(builtin_id)
+        if not isinstance(source, dict):
+            continue
+        now = _now_iso_utc()
+        new_user = {
+            "id": user_id,
+            "name": f"{family} User",
+            "family": family,
+            "system_prompt": str(source.get("system_prompt", "")).strip(),
+            "ban_list": _normalize_ban_list(source.get("ban_list", [])),
+            "temperature": _clamp_float(source.get("temperature"), GENERATION_TEMPERATURE_DEFAULT, 0.0, 2.0),
+            "top_p": _clamp_float(source.get("top_p"), GENERATION_TOP_P_DEFAULT, 0.0, 1.0),
+            "max_tokens": _clamp_int(source.get("max_tokens"), GENERATION_MAX_TOKENS_DEFAULT, 32, 2048),
+            "validated_model_name": str(source.get("validated_model_name", "")).strip(),
+            "is_builtin": False,
+            "created_at": now,
+            "updated_at": now,
+        }
+        merged.append(new_user)
     return merged
 
 
@@ -218,6 +341,9 @@ class GPMVLMPresetStore:
         family: str,
         system_prompt: str,
         ban_list: list[str] | str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         normalized_family = str(family).strip()
         if normalized_family not in ALLOWED_FAMILIES:
@@ -232,6 +358,25 @@ class GPMVLMPresetStore:
         if not isinstance(presets, list):
             presets = []
 
+        final_temperature = _clamp_float(
+            temperature if temperature is not None else GENERATION_TEMPERATURE_DEFAULT,
+            GENERATION_TEMPERATURE_DEFAULT,
+            0.0,
+            2.0,
+        )
+        final_top_p = _clamp_float(
+            top_p if top_p is not None else GENERATION_TOP_P_DEFAULT,
+            GENERATION_TOP_P_DEFAULT,
+            0.0,
+            1.0,
+        )
+        final_max_tokens = _clamp_int(
+            max_tokens if max_tokens is not None else GENERATION_MAX_TOKENS_DEFAULT,
+            GENERATION_MAX_TOKENS_DEFAULT,
+            32,
+            2048,
+        )
+
         now = _now_iso_utc()
         new_preset = {
             "id": f"user-{uuid.uuid4().hex}",
@@ -239,6 +384,9 @@ class GPMVLMPresetStore:
             "family": normalized_family,
             "system_prompt": str(system_prompt or "").strip(),
             "ban_list": _normalize_ban_list(ban_list),
+            "temperature": final_temperature,
+            "top_p": final_top_p,
+            "max_tokens": final_max_tokens,
             "validated_model_name": "",
             "is_builtin": False,
             "created_at": now,
@@ -263,6 +411,9 @@ class GPMVLMPresetStore:
             str(source.get("family", FAMILY_SDXL)),
             str(source.get("system_prompt", "")),
             _normalize_ban_list(source.get("ban_list", [])),
+            _clamp_float(source.get("temperature"), GENERATION_TEMPERATURE_DEFAULT, 0.0, 2.0),
+            _clamp_float(source.get("top_p"), GENERATION_TOP_P_DEFAULT, 0.0, 1.0),
+            _clamp_int(source.get("max_tokens"), GENERATION_MAX_TOKENS_DEFAULT, 32, 2048),
         )
 
     def update_user_preset(
@@ -272,6 +423,9 @@ class GPMVLMPresetStore:
         family: str | None = None,
         system_prompt: str | None = None,
         ban_list: list[str] | str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         key = str(preset_id).strip()
         if not key:
@@ -302,6 +456,12 @@ class GPMVLMPresetStore:
                 preset["system_prompt"] = str(system_prompt).strip()
             if ban_list is not None:
                 preset["ban_list"] = _normalize_ban_list(ban_list)
+            if temperature is not None:
+                preset["temperature"] = _clamp_float(temperature, GENERATION_TEMPERATURE_DEFAULT, 0.0, 2.0)
+            if top_p is not None:
+                preset["top_p"] = _clamp_float(top_p, GENERATION_TOP_P_DEFAULT, 0.0, 1.0)
+            if max_tokens is not None:
+                preset["max_tokens"] = _clamp_int(max_tokens, GENERATION_MAX_TOKENS_DEFAULT, 32, 2048)
             if "validated_model_name" not in preset:
                 preset["validated_model_name"] = ""
 

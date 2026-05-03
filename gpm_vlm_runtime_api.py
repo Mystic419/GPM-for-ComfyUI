@@ -11,6 +11,7 @@ from urllib import request as urllib_request
 
 from PIL import Image, UnidentifiedImageError
 
+from .gpm_vlm_presets import get_preset_generation_settings
 from .gpm_vlm_runtime_base import GPMVLMRuntime, RUNTIME_MODE_API
 
 
@@ -25,8 +26,11 @@ def _build_user_prompt(preset: dict[str, Any]) -> str:
 
     return (
         f"Generate prompts for family '{family}'. "
+        "Describe only what is clearly visible in this exact image; do not use generic assumptions or stock caption patterns. "
+        "If there is no clear person/subject, return person_prompt as an empty string. "
+        "If there is no clear environment/background, return scene_prompt as an empty string. "
         "Return strict JSON only with keys person_prompt and scene_prompt. "
-        "Do not return markdown. Keep output concise and reusable. "
+        "Do not return markdown or extra keys. Keep output reusable and structured. "
         f"{ban_text}"
     ).strip()
 
@@ -145,6 +149,7 @@ def generate_with_openai_compatible_api(
     image_path: Path,
     preset: dict[str, Any],
 ) -> tuple[str, str, str]:
+    temperature, top_p, max_tokens = get_preset_generation_settings(preset)
     try:
         image_data_url = _image_to_data_url(image_path)
     except UnidentifiedImageError as exc:
@@ -154,7 +159,9 @@ def generate_with_openai_compatible_api(
 
     payload = {
         "model": model_name,
-        "temperature": 0.2,
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_tokens,
         "messages": [
             {"role": "system", "content": str(preset.get("system_prompt", "")).strip()},
             {
@@ -233,4 +240,3 @@ class GPMGGUFAPIRuntime(GPMVLMRuntime):
             image_path=image_path,
             preset=preset,
         )
-
