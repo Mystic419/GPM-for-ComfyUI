@@ -66,6 +66,12 @@ All notable user-visible changes should be recorded here.
   - ComfyUI Manager is the supported install path
   - manual clone/copy is an advanced fallback
   - `install.py` is retained for special `llama-cpp-python` wheel handling only
+- `install.py` CUDA strategy is now safer for normal users:
+  - local CUDA source build is no longer attempted by default in `auto`/`cuda`
+  - new `GPM_LLAMA_INSTALL_MODE=cuda-build` enables explicit advanced local CUDA source build attempts
+  - unsupported CUDA tags (for example `cu130`) now log an explicit opt-in message and continue with CPU fallback
+  - CUDA source-build attempts now use a 90-minute timeout before CPU fallback
+  - `llama-cpp-python` package target is centralized under installer constant `LLAMA_PIP_SPEC`
 - Per-image scan sidecar metadata is now intentionally minimal and stable by default:
   - `gpm_meta.vlm_scan` now stores only `family`, `preset_id`, `backend`, `runtime`, `model`, `status`, and `scanned_at`.
   - verbose internal runtime/debug details were moved out of normal `vlm_scan` and now write to `gpm_meta.vlm_scan_debug` only when internal scanner `debug_mode=ON`.

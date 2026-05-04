@@ -4,8 +4,10 @@ import importlib.util
 import importlib
 import os
 import platform
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -14,13 +16,28 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REQUIREMENTS_PATH = SCRIPT_DIR / "requirements.txt"
 LLAMA_IMPORT_NAME = "llama_cpp"
 LLAMA_PIP_NAME = "llama-cpp-python"
+# TODO: Keep this aligned to the currently tested GPM llama-cpp-python runtime version until hosted wheel manifests land.
+LLAMA_PIP_VERSION = "0.3.22"
+LLAMA_PIP_SPEC = f"{LLAMA_PIP_NAME}=={LLAMA_PIP_VERSION}"
 LLAMA_CUBLAS_INDEX_BASE = "https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels"
+# TODO: Support a GPM-hosted wheel manifest so supported CUDA families can be updated without editing installer code.
 SUPPORTED_CUDA_WHEEL_TAGS = {"cu121", "cu122", "cu123", "cu124", "cu125"}
+PHASE1_LOCAL_WHEEL_CUDA_TAG = "cu130"
+PHASE1_LOCAL_WHEEL_SUPPORTED_ARCHES = {
+    "sm86": {"family": "RTX 30-series / Ampere", "status": "validated"},
+    "sm89": {"family": "RTX 40-series / Ada", "status": "built_unvalidated"},
+    "sm120": {"family": "RTX 50-series / Blackwell", "status": "built_unvalidated"},
+}
+PHASE1_LOCAL_WHEEL_PLATFORM_TAG = "win_amd64"
+PHASE1_LOCAL_WHEEL_PYTHON_TAG = "cp312"
+PHASE1_LOCAL_WHEEL_ALLOW_UNKNOWN_ARCH_FALLBACK = False
+SOURCE_BUILD_TIMEOUT_SECONDS = 90 * 60
 INSTALL_MODE_ENV = "GPM_LLAMA_INSTALL_MODE"
 INSTALL_MODE_AUTO = "auto"
 INSTALL_MODE_CPU = "cpu"
 INSTALL_MODE_CUDA = "cuda"
-VALID_INSTALL_MODES = {INSTALL_MODE_AUTO, INSTALL_MODE_CPU, INSTALL_MODE_CUDA}
+INSTALL_MODE_CUDA_BUILD = "cuda-build"
+VALID_INSTALL_MODES = {INSTALL_MODE_AUTO, INSTALL_MODE_CPU, INSTALL_MODE_CUDA, INSTALL_MODE_CUDA_BUILD}
 INTERNAL_SUPPORT_MODULE = "gpm_vlm_internal_multimodal"
 
 
@@ -52,14 +69,15 @@ def _run(
     stream_output: bool = False,
     heartbeat_message: str | None = None,
     heartbeat_interval_seconds: int = 25,
-) -> tuple[bool, str]:
+    timeout_seconds: int | None = None,
+) -> tuple[bool, str, bool]:
     _log(f"Running: {' '.join(args)}")
     if not stream_output:
         completed = subprocess.run(args, check=False, env=env)
         if completed.returncode == 0:
-            return True, ""
+            return True, "", False
         _log(f"Command failed (exit={completed.returncode})")
-        return False, f"pip exited with code {completed.returncode}"
+        return False, f"pip exited with code {completed.returncode}", False
 
     started_at = time.time()
     recent_lines: list[str] = []
@@ -88,31 +106,66 @@ def _run(
         stop_heartbeat.set()
         heartbeat_thread.join(timeout=1.0)
         _log(f"Command failed to start: {exc}")
-        return False, str(exc)
+        return False, str(exc), False
 
     assert process.stdout is not None
-    for line in process.stdout:
-        print(line, end="")
-        stripped = line.strip()
-        if stripped:
-            recent_lines.append(stripped)
-            if len(recent_lines) > 300:
-                recent_lines = recent_lines[-300:]
+    read_done = threading.Event()
 
-    process.wait()
+    def _reader() -> None:
+        nonlocal recent_lines
+        try:
+            for line in process.stdout:
+                print(line, end="")
+                stripped = line.strip()
+                if stripped:
+                    recent_lines.append(stripped)
+                    if len(recent_lines) > 300:
+                        recent_lines = recent_lines[-300:]
+        finally:
+            read_done.set()
+
+    reader_thread = threading.Thread(target=_reader, daemon=True)
+    reader_thread.start()
+
+    timed_out = False
+    while True:
+        if process.poll() is not None:
+            break
+        if timeout_seconds is not None and (time.time() - started_at) >= timeout_seconds:
+            timed_out = True
+            try:
+                process.terminate()
+                process.wait(timeout=10)
+            except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+            break
+        time.sleep(0.2)
+
+    try:
+        process.wait(timeout=10)
+    except Exception:
+        pass
+    read_done.wait(timeout=1.0)
+    reader_thread.join(timeout=1.0)
     stop_heartbeat.set()
     heartbeat_thread.join(timeout=1.0)
 
+    if timed_out:
+        return False, f"timed out after {_format_elapsed(timeout_seconds or 0)}", True
+
     if process.returncode == 0:
-        return True, ""
+        return True, "", False
 
     _log(f"Command failed (exit={process.returncode})")
-    return False, _extract_failure_detail(recent_lines, process.returncode)
+    return False, _extract_failure_detail(recent_lines, process.returncode), False
 
 
 def _pip_install(args: list[str], env: dict[str, str] | None = None) -> bool:
     cmd = [sys.executable, "-m", "pip", "--disable-pip-version-check", "install", *args]
-    ok, _ = _run(cmd, env=env)
+    ok, _, _ = _run(cmd, env=env)
     return ok
 
 
@@ -199,6 +252,149 @@ def _detect_avx_folder() -> str:
     return "AVX"
 
 
+def _detect_python_tag() -> str:
+    return f"cp{sys.version_info.major}{sys.version_info.minor}"
+
+
+def _detect_platform_tag() -> str:
+    if os.name == "nt" and platform.machine().lower() in {"amd64", "x86_64"}:
+        return "win_amd64"
+    return f"{sys.platform}_{platform.machine().lower()}"
+
+
+def _detect_cuda_sm_arch() -> str:
+    if importlib.util.find_spec("torch") is None:
+        return ""
+    try:
+        import torch  # type: ignore
+
+        if not torch.cuda.is_available():
+            return ""
+        major, minor = torch.cuda.get_device_capability(0)
+        return f"sm{major}{minor}"
+    except Exception:
+        return ""
+
+
+def _phase1_raw_pip_wheel_filename() -> str:
+    return f"llama_cpp_python-{LLAMA_PIP_VERSION}-py3-none-{PHASE1_LOCAL_WHEEL_PLATFORM_TAG}.whl"
+
+
+def _phase1_archived_wheel_filename(python_tag: str, cuda_tag: str, sm_arch: str) -> str:
+    return (
+        f"llama_cpp_python-{LLAMA_PIP_VERSION}-{python_tag}-{PHASE1_LOCAL_WHEEL_PLATFORM_TAG}-"
+        f"{cuda_tag}-{sm_arch}.whl"
+    )
+
+
+def _is_phase1_pip_valid_wheel_filename(name: str) -> bool:
+    return name == _phase1_raw_pip_wheel_filename()
+
+
+def _find_phase1_local_wheel_candidate(python_tag: str, cuda_tag: str, sm_arch: str) -> tuple[Path | None, str]:
+    wheel_dirs = [
+        SCRIPT_DIR / "wheels",
+        SCRIPT_DIR / "dist" / "gpm_wheels",
+    ]
+    archived_name = _phase1_archived_wheel_filename(python_tag=python_tag, cuda_tag=cuda_tag, sm_arch=sm_arch)
+    raw_name = _phase1_raw_pip_wheel_filename()
+
+    for wheel_dir in wheel_dirs:
+        if not wheel_dir.exists():
+            continue
+        archived_path = wheel_dir / archived_name
+        if archived_path.exists():
+            return archived_path, "archived"
+    for wheel_dir in wheel_dirs:
+        if not wheel_dir.exists():
+            continue
+        raw_path = wheel_dir / raw_name
+        if raw_path.exists():
+            return raw_path, "raw"
+    return None, ""
+
+
+def _install_local_wheel_via_pip_filename(wheel_path: Path) -> bool:
+    if _is_phase1_pip_valid_wheel_filename(wheel_path.name):
+        _log("Installing local GPM CUDA wheel.")
+        return _pip_install(["--force-reinstall", str(wheel_path)])
+
+    _log(f"Preparing archived wheel for pip install: {wheel_path}")
+    pip_wheel_name = _phase1_raw_pip_wheel_filename()
+    with tempfile.TemporaryDirectory(prefix="gpm_llama_wheel_") as temp_dir:
+        temp_wheel_path = Path(temp_dir) / pip_wheel_name
+        shutil.copy2(wheel_path, temp_wheel_path)
+        _log(f"Temporary pip wheel path: {temp_wheel_path}")
+        _log("Installing local GPM CUDA wheel.")
+        return _pip_install(["--force-reinstall", str(temp_wheel_path)])
+
+
+def _install_llama_local_phase1_wheel(cuda_tag: str) -> bool:
+    _log("Looking for local GPM CUDA wheel (Phase 1).")
+    if os.name != "nt":
+        _log("Local GPM wheel path is currently Windows-only; skipping.")
+        return False
+    python_tag = _detect_python_tag()
+    if python_tag != PHASE1_LOCAL_WHEEL_PYTHON_TAG:
+        _log(f"Local GPM wheel path supports Python tag {PHASE1_LOCAL_WHEEL_PYTHON_TAG} only (detected {python_tag}); skipping.")
+        return False
+    platform_tag = _detect_platform_tag()
+    if platform_tag != PHASE1_LOCAL_WHEEL_PLATFORM_TAG:
+        _log(f"Local GPM wheel path supports platform tag {PHASE1_LOCAL_WHEEL_PLATFORM_TAG} only (detected {platform_tag}); skipping.")
+        return False
+    if cuda_tag != PHASE1_LOCAL_WHEEL_CUDA_TAG:
+        _log(f"Local GPM wheel path supports CUDA tag {PHASE1_LOCAL_WHEEL_CUDA_TAG} only (detected {cuda_tag}); skipping.")
+        return False
+
+    sm_arch = _detect_cuda_sm_arch()
+    if sm_arch:
+        arch_info = PHASE1_LOCAL_WHEEL_SUPPORTED_ARCHES.get(sm_arch)
+        if not arch_info:
+            _log(f"No local GPM wheel is supported for detected GPU arch {sm_arch}; skipping local wheel.")
+            return False
+        family = str(arch_info.get("family", "unknown family"))
+        status = str(arch_info.get("status", "unknown"))
+        _log(f"Detected GPU arch {sm_arch} ({family}), local wheel status={status}.")
+        if status != "validated":
+            _log(
+                "This local wheel is built but not maintainer-validated; community validation is needed. "
+                "Continuing because detected arch matches."
+            )
+    elif PHASE1_LOCAL_WHEEL_ALLOW_UNKNOWN_ARCH_FALLBACK:
+        _log(
+            "GPU arch detection unavailable; allowing Phase 1 local wheel fallback for known tested profile "
+            f"({PHASE1_LOCAL_WHEEL_CUDA_TAG}/sm86)."
+        )
+    else:
+        _log(
+            "GPU arch detection unavailable; skipping local Phase 1 wheel install because this wheel is validated "
+            "only for sm86 (RTX 30-series / Ampere)."
+        )
+        return False
+
+    # TODO: Replace filename-only matching with manifest metadata once hosted wheel manifests are implemented.
+    wheel_path, wheel_kind = _find_phase1_local_wheel_candidate(
+        python_tag=python_tag,
+        cuda_tag=cuda_tag,
+        sm_arch=sm_arch,
+    )
+    if not wheel_path:
+        _log("No matching local GPM CUDA wheel found in ./wheels or ./dist/gpm_wheels.")
+        return False
+
+    if wheel_kind == "archived":
+        _log(f"Matched local GPM archived wheel: {wheel_path}")
+    else:
+        _log(f"Matched local GPM raw pip wheel fallback: {wheel_path}")
+
+    ok = _install_local_wheel_via_pip_filename(wheel_path)
+    if ok:
+        _log("Local GPM CUDA wheel install succeeded.")
+    else:
+        _log("Local GPM CUDA wheel install failed.")
+    return ok
+
+
 def _install_llama_cuda(cuda_tag: str, avx_folder: str) -> bool:
     index_url = f"{LLAMA_CUBLAS_INDEX_BASE}/{avx_folder}/{cuda_tag}"
     _log(f"Trying CUDA/cuBLAS wheel index: {index_url}")
@@ -206,12 +402,12 @@ def _install_llama_cuda(cuda_tag: str, avx_folder: str) -> bool:
         "--upgrade",
         "--force-reinstall",
         "--no-deps",
-        LLAMA_PIP_NAME,
+        LLAMA_PIP_SPEC,
         f"--index-url={index_url}",
     ])
 
 
-def _install_llama_cuda_source_build() -> tuple[bool, str]:
+def _install_llama_cuda_source_build() -> tuple[bool, str, bool]:
     _log("No usable prebuilt CUDA wheel was found for this system.")
     _log("local CUDA build started")
     _log("this may take several minutes")
@@ -236,27 +432,32 @@ def _install_llama_cuda_source_build() -> tuple[bool, str]:
         "--force-reinstall",
         "--no-cache-dir",
         "--no-binary=llama-cpp-python",
-        LLAMA_PIP_NAME,
+        LLAMA_PIP_SPEC,
     ]
     started_at = time.time()
-    ok, detail = _run(
+    ok, detail, timed_out = _run(
         cmd,
         env=env,
         stream_output=True,
         heartbeat_message="still building llama-cpp-python from source...",
         heartbeat_interval_seconds=25,
+        timeout_seconds=SOURCE_BUILD_TIMEOUT_SECONDS,
     )
     elapsed = _format_elapsed(time.time() - started_at)
     if ok:
         _log(f"local CUDA build finished in {elapsed}")
-        return True, ""
+        return True, "", False
+    if timed_out:
+        _log(f"CUDA source build timed out after {_format_elapsed(SOURCE_BUILD_TIMEOUT_SECONDS)}")
+        _log("Continuing with CPU fallback install; CPU mode may be slower.")
+        return False, detail, True
     _log(f"local CUDA build failed after {elapsed}")
-    return False, detail
+    return False, detail, False
 
 
 def _install_llama_fallback() -> bool:
     _log("Falling back to plain pip install for llama-cpp-python.")
-    return _pip_install(["--upgrade", LLAMA_PIP_NAME])
+    return _pip_install(["--upgrade", LLAMA_PIP_SPEC])
 
 
 def _probe_llama_capabilities() -> tuple[str, str]:
@@ -304,7 +505,7 @@ def main() -> int:
         _log(f"llama_cpp already installed (version={_llama_version()}).")
     else:
         use_cuda = False
-        if mode == INSTALL_MODE_CUDA:
+        if mode in {INSTALL_MODE_CUDA, INSTALL_MODE_CUDA_BUILD}:
             use_cuda = True
         elif mode == INSTALL_MODE_CPU:
             use_cuda = False
@@ -317,16 +518,36 @@ def main() -> int:
                 _log(f"Detected CUDA tag '{cuda_tag}' is in supported prebuilt wheel families.")
                 installed = _install_llama_cuda(cuda_tag=cuda_tag, avx_folder=avx_folder)
                 if not installed:
-                    _log("CUDA wheel install failed; attempting CUDA source build before CPU fallback.")
+                    _log("CUDA wheel install failed.")
             else:
-                _log(f"Detected CUDA tag '{cuda_tag}' is outside supported prebuilt wheel families ({', '.join(sorted(SUPPORTED_CUDA_WHEEL_TAGS))}).")
+                if mode == INSTALL_MODE_AUTO:
+                    _log(f"Detected CUDA tag '{cuda_tag}' is outside supported prebuilt wheel families.")
+                    _log("Local CUDA source build is available but not enabled in auto mode because it can take a long time.")
+                    _log("To enable it, set GPM_LLAMA_INSTALL_MODE=cuda-build and reinstall.")
+                else:
+                    _log(f"Detected CUDA tag '{cuda_tag}' is outside supported prebuilt wheel families ({', '.join(sorted(SUPPORTED_CUDA_WHEEL_TAGS))}).")
+                    _log("Local CUDA source build is available only in cuda-build mode.")
 
             if not installed:
-                source_ok, source_error = _install_llama_cuda_source_build()
+                installed = _install_llama_local_phase1_wheel(cuda_tag=cuda_tag)
+                if not installed:
+                    _log("Continuing without local GPM CUDA wheel.")
+
+            should_try_source_build = (not installed) and (mode == INSTALL_MODE_CUDA_BUILD)
+            if should_try_source_build:
+                _log("cuda-build mode is enabled; attempting local CUDA source build before CPU fallback.")
+                source_ok, source_error, source_timed_out = _install_llama_cuda_source_build()
                 installed = source_ok
-                if not source_ok:
+                if not source_ok and not source_timed_out:
                     _log(f"CUDA source build failed: {source_error}")
                     _log("Continuing with CPU fallback install; CPU mode may be slower.")
+        elif mode == INSTALL_MODE_CUDA_BUILD and use_cuda and not cuda_tag:
+            _log("cuda-build mode requested but CUDA version tag is unavailable; attempting local CUDA source build anyway.")
+            source_ok, source_error, source_timed_out = _install_llama_cuda_source_build()
+            installed = source_ok
+            if not source_ok and not source_timed_out:
+                _log(f"CUDA source build failed: {source_error}")
+                _log("Continuing with CPU fallback install; CPU mode may be slower.")
         elif use_cuda and not cuda_tag:
             _log("CUDA mode requested but CUDA version tag is unavailable; using standard pip install.")
 

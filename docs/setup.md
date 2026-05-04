@@ -24,12 +24,64 @@
 - `install.py` checks `import llama_cpp` first.
   - if already importable, installer prints status and exits without reinstalling
   - if missing, installer can try a CUDA/cuBLAS wheel index path when CUDA is applicable (`jllllll` cuBLAS wheel index family)
-  - if CUDA wheel install fails (or CUDA is not used), installer falls back to plain `pip install --upgrade llama-cpp-python`
+  - in `auto`/`cuda`, unsupported CUDA wheel families do not trigger local source builds; installer falls back to CPU wheel install
+  - local CUDA source build is available only in `cuda-build` mode and uses a 90-minute timeout before CPU fallback
+  - if CUDA wheel/source build install fails (or CUDA is not used), installer falls back to plain `pip install --upgrade llama-cpp-python`
 - `requirements.txt` is intentionally minimal and does not include `llama-cpp-python`.
 - llama install mode can be overridden with:
   - `GPM_LLAMA_INSTALL_MODE=auto` (default)
   - `GPM_LLAMA_INSTALL_MODE=cpu`
   - `GPM_LLAMA_INSTALL_MODE=cuda`
+  - `GPM_LLAMA_INSTALL_MODE=cuda-build` (advanced opt-in local CUDA source build)
+
+### Maintainer wheel build helper (Windows CUDA)
+- `scripts/build_llama_cpp_wheel.ps1` is maintainer/developer-only tooling for building a local `llama-cpp-python` wheel.
+- Normal users should install GPM through ComfyUI Manager and use the regular `install.py` flow.
+- This script runs `pip wheel` only; it does not install the wheel and does not uninstall/modify existing `llama_cpp`.
+- Source builds can take a long time depending on machine and toolchain state.
+- Phase 1 target is Windows CUDA wheel building.
+- Default `CudaArchitectures` is `86` (RTX 30-series Ampere).
+- Other architectures can be passed later, but should be validated before release use.
+- After `scripts/build_llama_cpp_wheel.ps1` runs, use the archived architecture-specific wheel artifact it prints (not the raw pip wheel filename).
+- Archive naming pattern:
+  - `llama_cpp_python-<version>-<python_tag>-win_amd64-cu130-sm<arch>.whl`
+- Installer local wheel behavior:
+  - archived architecture-specific filenames are preferred for storage/distribution and local matching
+  - when an archived wheel is selected, `install.py` copies it to a temporary pip-valid filename before install:
+    - `llama_cpp_python-<version>-py3-none-win_amd64.whl`
+  - raw pip wheel filenames are fallback/local build leftovers only
+- Local maintainer wheel manifest (documentation-only for now):
+  - `dist/gpm_wheels/wheels_manifest.local.json` records locally built maintainer CUDA wheels.
+  - Because `dist/` is gitignored, `docs/wheels_manifest.example.json` is the checked-in template.
+  - Current status in the manifest:
+    - `sm86` is validated (validated on RTX 3060 / Ampere).
+    - `sm89` and `sm120` are built but require community validation.
+  - This manifest does not change installer behavior yet; hosted-download installer support comes later.
+- `install.py` now checks local wheel directories before CPU fallback in CUDA paths:
+  - `.\wheels\`
+  - `.\dist\gpm_wheels\`
+- Phase 1 local wheel matching is intentionally narrow: Windows + Python 3.12 + `win_amd64` + `cu130` + detected GPU SM arch.
+- Supported local archived wheel arches (when matching wheel files are present):
+  - `sm86` (RTX 30-series / Ampere): validated
+  - `sm89` (RTX 40-series / Ada): built, maintainer-unvalidated (community validation needed)
+  - `sm120` (RTX 50-series / Blackwell): built, maintainer-unvalidated (community validation needed)
+- If detected SM arch is unsupported (or matching wheel is missing), installer skips local wheel and falls back to CPU unless user opts into `cuda-build`.
+- Wheel files are local/distribution artifacts and are not committed to git; distribution workflow will be added later.
+
+PowerShell examples:
+```powershell
+# Build default tested wheel (0.3.22, sm86) using active python
+.\scripts\build_llama_cpp_wheel.ps1
+
+# Build with explicit ComfyUI/testing venv python
+.\scripts\build_llama_cpp_wheel.ps1 -PythonExe "F:\My_AI\Data\Packages\testing\venv\Scripts\python.exe"
+
+# Build alternate architecture/version
+.\scripts\build_llama_cpp_wheel.ps1 -CudaArchitectures "89" -Version "0.3.22"
+
+# Test install from archived architecture-specific wheel (no source build flags)
+.\scripts\test_llama_cpp_wheel_install.ps1 -PythonExe "F:\My_AI\Data\Packages\testing\venv\Scripts\python.exe" -WheelPath "D:\antigravity\GPM\dist\gpm_wheels\llama_cpp_python-0.3.22-cp312-win_amd64-cu130-sm86.whl"
+```
 
 ### Startup diagnostics behavior
 - On normal GPM import at ComfyUI startup, a concise dependency status block is printed:
@@ -53,15 +105,18 @@ python .\install.py
 # explicit cpu mode
 $env:GPM_LLAMA_INSTALL_MODE='cpu'; python .\install.py
 
-# explicit cuda mode
+# explicit cuda mode (prebuilt CUDA wheel attempt; no source build)
 $env:GPM_LLAMA_INSTALL_MODE='cuda'; python .\install.py
+
+# advanced local CUDA source-build mode
+$env:GPM_LLAMA_INSTALL_MODE='cuda-build'; python .\install.py
 ```
 
 ### Final dependency report fields
 `install.py` prints at minimum:
 - Python executable
 - platform
-- selected llama install mode (`auto` / `cpu` / `cuda`)
+- selected llama install mode (`auto` / `cpu` / `cuda` / `cuda-build`)
 - CUDA detection status
 - `llama_cpp` import status
 - `llama-cpp-python` version (if importable)

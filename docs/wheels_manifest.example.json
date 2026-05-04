@@ -1,0 +1,37 @@
+{
+  "artifact_type": "gpm_local_wheel_manifest",
+  "description": "Example local maintainer manifest for llama-cpp-python CUDA wheels. This file is a template only and does not indicate wheel artifacts are tracked in git.",
+  "llama_cpp_python_version": "0.3.22",
+  "platform": "win_amd64",
+  "os": "Windows",
+  "python_tag": "cp312",
+  "python_version": "3.12",
+  "cuda": "cu130",
+  "wheels": [
+    {
+      "arch": "sm86",
+      "gpu_family": "RTX 30-series / Ampere",
+      "status": "validated",
+      "validated_on": "RTX 3060",
+      "filename": "llama_cpp_python-0.3.22-cp312-win_amd64-cu130-sm86.whl",
+      "size": 91814821,
+      "sha256": "806DBB36DB10415D3B8515C7D4D4F9F61959600572F30AA71E901380EE144349"
+    },
+    {
+      "arch": "sm89",
+      "gpu_family": "RTX 40-series / Ada",
+      "status": "built_unvalidated",
+      "filename": "llama_cpp_python-0.3.22-cp312-win_amd64-cu130-sm89.whl",
+      "size": 91613393,
+      "sha256": "76164B230902243581DEC2252815C597DF5EB9077AD9CA72E740833E54615B63"
+    },
+    {
+      "arch": "sm120",
+      "gpu_family": "RTX 50-series / Blackwell",
+      "status": "built_unvalidated",
+      "filename": "llama_cpp_python-0.3.22-cp312-win_amd64-cu130-sm120.whl",
+      "size": 95397898,
+      "sha256": "890DA6CF9B302D9108F7924A81D818FFABBD36914D995E816AE4F8670CE227A6"
+    }
+  ]
+}

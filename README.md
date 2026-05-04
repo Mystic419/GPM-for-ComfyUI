@@ -209,8 +209,10 @@ python .\scripts\migrate_prompt_keys.py <your_image_root>
 - `install.py` checks `import llama_cpp` first:
   - if already installed, it does not reinstall
   - if missing, it can try CUDA/cuBLAS index path when CUDA is applicable
-  - if CUDA wheel install fails (or CUDA is not used), it falls back to plain `pip install --upgrade llama-cpp-python`
-- optional install mode override is available with `GPM_LLAMA_INSTALL_MODE` (`auto`, `cpu`, `cuda`).
+  - in `auto`/`cuda`, unsupported CUDA wheel families do not trigger local source build; installer falls back to CPU wheel install
+  - local CUDA source build is advanced opt-in only via `GPM_LLAMA_INSTALL_MODE=cuda-build`
+  - if CUDA wheel or source build path is unavailable/fails, it falls back to plain `pip install --upgrade llama-cpp-python`
+- optional install mode override is available with `GPM_LLAMA_INSTALL_MODE` (`auto`, `cpu`, `cuda`, `cuda-build`).
 - on GPM module import, startup diagnostics print dependency status (`Pillow`, `llama_cpp`, internal support import, readiness) without running pip.
 - Manager installs should normally not require manual commands; `install.py` remains available for special `llama-cpp-python` wheel handling when needed.
 - Internal scanner readiness depends on both:

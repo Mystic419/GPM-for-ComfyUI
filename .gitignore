@@ -19,7 +19,9 @@ venv/
 # Node
 node_modules/
 dist/
+dist/gpm_wheels/
 build/
+*.whl
 
 # Logs
 *.log
