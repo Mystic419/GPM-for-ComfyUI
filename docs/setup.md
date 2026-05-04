@@ -24,6 +24,8 @@
 - `install.py` checks `import llama_cpp` first.
   - if already importable, installer prints status and exits without reinstalling
   - if missing, installer can try a CUDA/cuBLAS wheel index path when CUDA is applicable (`jllllll` cuBLAS wheel index family)
+  - if CUDA index install does not succeed, installer tries local GPM archived wheels first (`.\wheels\`, then `.\dist\gpm_wheels\`)
+  - if local GPM wheel is not available, installer tries hosted GPM archived wheel download from GitHub Release before CPU fallback
   - in `auto`/`cuda`, unsupported CUDA wheel families do not trigger local source builds; installer falls back to CPU wheel install
   - local CUDA source build is available only in `cuda-build` mode and uses a 90-minute timeout before CPU fallback
   - if CUDA wheel/source build install fails (or CUDA is not used), installer falls back to plain `pip install --upgrade llama-cpp-python`
@@ -60,6 +62,12 @@
 - `install.py` now checks local wheel directories before CPU fallback in CUDA paths:
   - `.\wheels\`
   - `.\dist\gpm_wheels\`
+- Hosted archived wheel support is intentionally narrow for now: Windows + Python 3.12 + `win_amd64` + `cu130` + detected GPU SM arch in (`sm86`, `sm89`, `sm120`).
+- Validation status for hosted/local `cu130` archived wheels:
+  - `sm86` (RTX 30-series / Ampere): validated (RTX 3060)
+  - `sm89` (RTX 40-series / Ada): built, maintainer-unvalidated (community validation needed)
+  - `sm120` (RTX 50-series / Blackwell): built, maintainer-unvalidated (community validation needed)
+- Users can still place archived wheels in `.\wheels\` to avoid any network download during install.
 - Phase 1 local wheel matching is intentionally narrow: Windows + Python 3.12 + `win_amd64` + `cu130` + detected GPU SM arch.
 - Supported local archived wheel arches (when matching wheel files are present):
   - `sm86` (RTX 30-series / Ampere): validated

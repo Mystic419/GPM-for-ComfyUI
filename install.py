@@ -2,6 +2,7 @@
 
 import importlib.util
 import importlib
+import hashlib
 import os
 import platform
 import shutil
@@ -10,6 +11,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -23,10 +26,16 @@ LLAMA_CUBLAS_INDEX_BASE = "https://jllllll.github.io/llama-cpp-python-cuBLAS-whe
 # TODO: Support a GPM-hosted wheel manifest so supported CUDA families can be updated without editing installer code.
 SUPPORTED_CUDA_WHEEL_TAGS = {"cu121", "cu122", "cu123", "cu124", "cu125"}
 PHASE1_LOCAL_WHEEL_CUDA_TAG = "cu130"
+GPM_WHEEL_RELEASE_BASE_URL = "https://github.com/Mystic419/GPM-for-ComfyUI/releases/download/llama-cpp-python-gpm-cu130-v0.3.22"
 PHASE1_LOCAL_WHEEL_SUPPORTED_ARCHES = {
     "sm86": {"family": "RTX 30-series / Ampere", "status": "validated"},
     "sm89": {"family": "RTX 40-series / Ada", "status": "built_unvalidated"},
     "sm120": {"family": "RTX 50-series / Blackwell", "status": "built_unvalidated"},
+}
+PHASE1_HOSTED_WHEEL_SHA256 = {
+    "sm86": "806DBB36DB10415D3B8515C7D4D4F9F61959600572F30AA71E901380EE144349",
+    "sm89": "76164B230902243581DEC2252815C597DF5EB9077AD9CA72E740833E54615B63",
+    "sm120": "890DA6CF9B302D9108F7924A81D818FFABBD36914D995E816AE4F8670CE227A6",
 }
 PHASE1_LOCAL_WHEEL_PLATFORM_TAG = "win_amd64"
 PHASE1_LOCAL_WHEEL_PYTHON_TAG = "cp312"
@@ -329,6 +338,28 @@ def _install_local_wheel_via_pip_filename(wheel_path: Path) -> bool:
         return _pip_install(["--force-reinstall", str(temp_wheel_path)])
 
 
+def _download_file(url: str, dest_path: Path) -> tuple[bool, str]:
+    try:
+        with urllib.request.urlopen(url) as response, dest_path.open("wb") as out:
+            shutil.copyfileobj(response, out)
+        return True, ""
+    except urllib.error.URLError as exc:
+        return False, str(exc)
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _sha256_upper(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest().upper()
+
+
 def _install_llama_local_phase1_wheel(cuda_tag: str) -> bool:
     _log("Looking for local GPM CUDA wheel (Phase 1).")
     if os.name != "nt":
@@ -393,6 +424,66 @@ def _install_llama_local_phase1_wheel(cuda_tag: str) -> bool:
     else:
         _log("Local GPM CUDA wheel install failed.")
     return ok
+
+
+def _install_llama_hosted_phase1_wheel(cuda_tag: str) -> bool:
+    _log("Looking for hosted GPM CUDA wheel.")
+    if os.name != "nt":
+        _log("Hosted GPM wheel path is currently Windows-only; skipping.")
+        return False
+    python_tag = _detect_python_tag()
+    if python_tag != PHASE1_LOCAL_WHEEL_PYTHON_TAG:
+        _log(f"Hosted GPM wheel path supports Python tag {PHASE1_LOCAL_WHEEL_PYTHON_TAG} only (detected {python_tag}); skipping.")
+        return False
+    platform_tag = _detect_platform_tag()
+    if platform_tag != PHASE1_LOCAL_WHEEL_PLATFORM_TAG:
+        _log(f"Hosted GPM wheel path supports platform tag {PHASE1_LOCAL_WHEEL_PLATFORM_TAG} only (detected {platform_tag}); skipping.")
+        return False
+    if cuda_tag != PHASE1_LOCAL_WHEEL_CUDA_TAG:
+        _log(f"Hosted GPM wheel path supports CUDA tag {PHASE1_LOCAL_WHEEL_CUDA_TAG} only (detected {cuda_tag}); skipping.")
+        return False
+
+    sm_arch = _detect_cuda_sm_arch()
+    if not sm_arch:
+        _log("GPU arch detection unavailable; skipping hosted GPM wheel install.")
+        return False
+    arch_info = PHASE1_LOCAL_WHEEL_SUPPORTED_ARCHES.get(sm_arch)
+    if not arch_info:
+        _log(f"No hosted GPM wheel is supported for detected GPU arch {sm_arch}; skipping hosted wheel.")
+        return False
+    family = str(arch_info.get("family", "unknown family"))
+    status = str(arch_info.get("status", "unknown"))
+    _log(f"Detected GPU arch {sm_arch} ({family}), hosted wheel status={status}.")
+    if status != "validated":
+        _log("This hosted wheel is built but not maintainer-validated; community validation is needed. Continuing because detected arch matches.")
+
+    archived_name = _phase1_archived_wheel_filename(python_tag=python_tag, cuda_tag=cuda_tag, sm_arch=sm_arch)
+    wheel_url = f"{GPM_WHEEL_RELEASE_BASE_URL}/{archived_name}"
+    _log(f"Hosted wheel URL: {wheel_url}")
+    with tempfile.TemporaryDirectory(prefix="gpm_llama_hosted_wheel_") as temp_dir:
+        temp_archived_path = Path(temp_dir) / archived_name
+        _log("Hosted wheel download started.")
+        download_ok, download_error = _download_file(url=wheel_url, dest_path=temp_archived_path)
+        if not download_ok:
+            _log(f"Hosted wheel download failed: {download_error}")
+            return False
+        _log("Hosted wheel download completed.")
+
+        expected_sha = PHASE1_HOSTED_WHEEL_SHA256.get(sm_arch, "")
+        if expected_sha:
+            actual_sha = _sha256_upper(temp_archived_path)
+            if actual_sha == expected_sha.upper():
+                _log(f"SHA256 verified: {actual_sha}")
+            else:
+                _log(f"SHA256 failed for hosted wheel: expected {expected_sha.upper()} got {actual_sha}")
+                return False
+
+        ok = _install_local_wheel_via_pip_filename(temp_archived_path)
+        if ok:
+            _log("Hosted GPM CUDA wheel install succeeded.")
+        else:
+            _log("Hosted GPM CUDA wheel install failed.")
+        return ok
 
 
 def _install_llama_cuda(cuda_tag: str, avx_folder: str) -> bool:
@@ -532,6 +623,10 @@ def main() -> int:
                 installed = _install_llama_local_phase1_wheel(cuda_tag=cuda_tag)
                 if not installed:
                     _log("Continuing without local GPM CUDA wheel.")
+            if not installed:
+                installed = _install_llama_hosted_phase1_wheel(cuda_tag=cuda_tag)
+                if not installed:
+                    _log("Continuing without hosted GPM CUDA wheel.")
 
             should_try_source_build = (not installed) and (mode == INSTALL_MODE_CUDA_BUILD)
             if should_try_source_build:
