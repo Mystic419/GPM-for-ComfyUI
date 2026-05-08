@@ -102,6 +102,79 @@ def _normalize_model_prompts(payload: dict[str, Any], family: str) -> tuple[str,
     return person_prompt, scene_prompt
 
 
+def clean_split_prompts(person_prompt: str, scene_prompt: str, family: str) -> tuple[str, str]:
+    person_text = str(person_prompt or "").strip()
+    scene_text = str(scene_prompt or "").strip()
+    family_name = str(family or "").strip()
+
+    def _split_fragments(text: str) -> list[str]:
+        if not text:
+            return []
+        return [fragment.strip() for fragment in text.split(",") if fragment.strip()]
+
+    person_fragments = _split_fragments(person_text)
+    scene_fragments = _split_fragments(scene_text)
+    if family_name != "SDXL":
+        return ", ".join(person_fragments), ", ".join(scene_fragments)
+
+    scene_terms_for_person = (
+        "background",
+        "setting",
+        "courtyard",
+        "architecture",
+        "archway",
+        "arches",
+        "wall",
+        "walls",
+        "room",
+        "street",
+        "outdoor",
+        "indoor",
+        "sky",
+        "sunlight",
+        "lighting",
+        "scenery",
+        "landscape",
+        "furniture",
+        "table",
+        "chair",
+        "chandelier",
+        "window",
+        "door",
+    )
+    person_terms_for_scene = (
+        "woman",
+        "man",
+        "girl",
+        "boy",
+        "person",
+        "character",
+        "hair",
+        "dress",
+        "gown",
+        "hat",
+        "necklace",
+        "pose",
+        "expression",
+        "looking at viewer",
+        "face",
+        "eyes",
+    )
+
+    def _filter_fragments(fragments: list[str], blocked_terms: tuple[str, ...]) -> list[str]:
+        kept: list[str] = []
+        for fragment in fragments:
+            lower_fragment = fragment.casefold()
+            if any(term in lower_fragment for term in blocked_terms):
+                continue
+            kept.append(fragment)
+        return kept
+
+    cleaned_person = _filter_fragments(person_fragments, scene_terms_for_person)
+    cleaned_scene = _filter_fragments(scene_fragments, person_terms_for_scene)
+    return ", ".join(cleaned_person), ", ".join(cleaned_scene)
+
+
 def _sanitize_person_prompt_if_environment_only(person_prompt: str) -> str:
     text = str(person_prompt or "").strip()
     if not text:
@@ -220,6 +293,7 @@ def generate_with_openai_compatible_api(
 
     family = str(preset.get("family", "SDXL"))
     person_prompt, scene_prompt = _normalize_model_prompts(output_payload, family)
+    person_prompt, scene_prompt = clean_split_prompts(person_prompt, scene_prompt, family)
     person_prompt = _sanitize_person_prompt_if_environment_only(person_prompt)
     return person_prompt, scene_prompt, ""
 

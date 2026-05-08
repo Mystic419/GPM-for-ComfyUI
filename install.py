@@ -325,8 +325,8 @@ def _find_phase1_local_wheel_candidate(python_tag: str, cuda_tag: str, sm_arch: 
 
 def _install_local_wheel_via_pip_filename(wheel_path: Path) -> bool:
     if _is_phase1_pip_valid_wheel_filename(wheel_path.name):
-        _log("Installing local GPM CUDA wheel.")
-        return _pip_install(["--force-reinstall", str(wheel_path)])
+        _log("Installing GPM CUDA wheel with --no-deps to avoid changing shared ComfyUI dependencies.")
+        return _pip_install(["--force-reinstall", "--no-deps", str(wheel_path)])
 
     _log(f"Preparing archived wheel for pip install: {wheel_path}")
     pip_wheel_name = _phase1_raw_pip_wheel_filename()
@@ -334,8 +334,8 @@ def _install_local_wheel_via_pip_filename(wheel_path: Path) -> bool:
         temp_wheel_path = Path(temp_dir) / pip_wheel_name
         shutil.copy2(wheel_path, temp_wheel_path)
         _log(f"Temporary pip wheel path: {temp_wheel_path}")
-        _log("Installing local GPM CUDA wheel.")
-        return _pip_install(["--force-reinstall", str(temp_wheel_path)])
+        _log("Installing GPM CUDA wheel with --no-deps to avoid changing shared ComfyUI dependencies.")
+        return _pip_install(["--force-reinstall", "--no-deps", str(temp_wheel_path)])
 
 
 def _download_file(url: str, dest_path: Path) -> tuple[bool, str]:

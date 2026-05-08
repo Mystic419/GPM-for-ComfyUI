@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import base64
+import gc
 import hashlib
+import io
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import Any
 import inspect
+
+from PIL import Image, UnidentifiedImageError
 
 from .gpm_vlm_internal_multimodal import (
     FAMILY_QWEN_VL,
@@ -18,8 +24,8 @@ from .gpm_vlm_internal_multimodal import (
 )
 from .gpm_vlm_runtime_api import (
     _build_user_prompt,
+    clean_split_prompts,
     _extract_json_object,
-    _image_to_data_url,
     _normalize_model_prompts,
     _sanitize_person_prompt_if_environment_only,
 )
@@ -27,6 +33,95 @@ from .gpm_vlm_runtime_base import GPMVLMRuntime, RUNTIME_MODE_INTERNAL
 
 
 _GPU_BACKEND_KEYS = ("cuda", "vulkan", "metal", "hip", "sycl", "opencl")
+_INTERNAL_SCAN_IMAGE_MAX_LONG_EDGE = 1024
+_INTERNAL_SCAN_IMAGE_JPEG_QUALITY = 90
+_LOGGER = logging.getLogger(__name__)
+
+
+def _best_effort_cuda_cache_clear() -> None:
+    try:
+        import torch  # type: ignore
+    except Exception:
+        return
+    try:
+        if bool(getattr(torch, "cuda", None)) and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _best_effort_memory_cleanup() -> None:
+    try:
+        gc.collect()
+    except Exception:
+        pass
+    _best_effort_cuda_cache_clear()
+    try:
+        import comfy.model_management as model_management  # type: ignore
+    except Exception:
+        return
+    try:
+        soft_empty_cache = getattr(model_management, "soft_empty_cache", None)
+        if callable(soft_empty_cache):
+            soft_empty_cache()
+    except Exception:
+        pass
+
+
+def _best_effort_close_object(obj: Any) -> None:
+    if obj is None:
+        return
+    for method_name in ("close", "shutdown", "free", "reset"):
+        method = getattr(obj, method_name, None)
+        if callable(method):
+            try:
+                method()
+            except Exception:
+                pass
+
+
+def _compute_downscaled_size(width: int, height: int, max_long_edge: int) -> tuple[int, int, bool]:
+    safe_width = max(1, int(width))
+    safe_height = max(1, int(height))
+    safe_cap = max(1, int(max_long_edge))
+    longest_side = max(safe_width, safe_height)
+    if longest_side <= safe_cap:
+        return safe_width, safe_height, False
+
+    scale = safe_cap / float(longest_side)
+    resized_w = max(1, int(safe_width * scale))
+    resized_h = max(1, int(safe_height * scale))
+    return resized_w, resized_h, True
+
+
+def _build_internal_image_data_url(
+    image_path: Path,
+    *,
+    max_long_edge: int = _INTERNAL_SCAN_IMAGE_MAX_LONG_EDGE,
+    jpeg_quality: int = _INTERNAL_SCAN_IMAGE_JPEG_QUALITY,
+) -> tuple[str, dict[str, Any]]:
+    # Cap internal VLM input to control VRAM/shared-memory spikes on mid-range GPUs.
+    # This does not modify source files; only the transient inference image is resized.
+    with Image.open(image_path) as image:
+        rgb = image.convert("RGB")
+        source_width, source_height = rgb.size
+        resized_width, resized_height, was_downscaled = _compute_downscaled_size(
+            source_width, source_height, max_long_edge
+        )
+        if was_downscaled:
+            rgb = rgb.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
+
+        buffer = io.BytesIO()
+        rgb.save(buffer, format="JPEG", quality=max(1, min(95, int(jpeg_quality))), optimize=True)
+        encoded = buffer.getvalue()
+
+    data_url = f"data:image/jpeg;base64,{base64.b64encode(encoded).decode('utf-8')}"
+    return data_url, {
+        "source_size": (int(source_width), int(source_height)),
+        "inference_size": (int(resized_width), int(resized_height)),
+        "downscaled_for_inference": bool(was_downscaled),
+        "max_long_edge_cap": int(max_long_edge),
+    }
 
 
 def _json_safe_debug_value(value: Any) -> Any:
@@ -205,6 +300,7 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
     _cache_lock: Lock = Lock()
     _cached_signature: tuple[Any, ...] | None = None
     _cached_llm: Any = None
+    _cached_chat_handler: Any = None
 
     def __init__(self, model_name: str, mmproj_name: str, timeout_seconds: int, config: GPMInternalRuntimeConfig):
         self.model_name = str(model_name).strip()
@@ -212,6 +308,7 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
         self.timeout_seconds = max(1, int(timeout_seconds))
         self.config = config
         self._llm: Any = None
+        self._chat_handler: Any = None
         self._chat_handler_name = ""
         self._model_family = ""
         self._detected_model_family = ""
@@ -296,6 +393,136 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
 
     def _llama_cpp_version(self) -> str:
         return str(_probe_llama_cpp_backend().get("llama_cpp_version", "") or "")
+
+    @classmethod
+    def _best_effort_release_runtime_components(
+        cls,
+        runtime: Any,
+        *,
+        reason: str,
+        release_cache: bool,
+    ) -> dict[str, Any]:
+        active_llm_obj = getattr(runtime, "_llm", None) if runtime is not None else None
+        active_handler_obj = getattr(runtime, "_chat_handler", None) if runtime is not None else None
+        if runtime is not None:
+            try:
+                runtime._llm = None  # pylint: disable=protected-access
+            except Exception:
+                pass
+            try:
+                runtime._chat_handler = None  # pylint: disable=protected-access
+            except Exception:
+                pass
+
+        cached_llm_obj = None
+        cached_handler_obj = None
+        if release_cache:
+            with cls._cache_lock:
+                cached_llm_obj = cls._cached_llm
+                cached_handler_obj = cls._cached_chat_handler
+                cls._cached_llm = None
+                cls._cached_chat_handler = None
+                cls._cached_signature = None
+
+        active_llm_found = active_llm_obj is not None
+        active_handler_found = active_handler_obj is not None
+        cached_llm_found = cached_llm_obj is not None
+        cached_handler_found = cached_handler_obj is not None
+        active_llm_close_attempted = False
+        active_handler_close_attempted = False
+        cached_llm_close_attempted = False
+        cached_handler_close_attempted = False
+
+        if active_llm_found:
+            active_llm_close_attempted = True
+            _best_effort_close_object(active_llm_obj)
+        if active_handler_found:
+            active_handler_close_attempted = True
+            _best_effort_close_object(active_handler_obj)
+
+        if cached_llm_found and cached_llm_obj is not active_llm_obj:
+            cached_llm_close_attempted = True
+            _best_effort_close_object(cached_llm_obj)
+        if cached_handler_found and cached_handler_obj is not active_handler_obj:
+            cached_handler_close_attempted = True
+            _best_effort_close_object(cached_handler_obj)
+
+        del active_llm_obj
+        del active_handler_obj
+        del cached_llm_obj
+        del cached_handler_obj
+        _best_effort_memory_cleanup()
+
+        return {
+            "requested": True,
+            "reason": str(reason),
+            "active_llm_found": bool(active_llm_found),
+            "active_llm_close_attempted": bool(active_llm_close_attempted),
+            "active_handler_found": bool(active_handler_found),
+            "active_handler_close_attempted": bool(active_handler_close_attempted),
+            "cached_llm_found": bool(cached_llm_found),
+            "cached_llm_close_attempted": bool(cached_llm_close_attempted),
+            "cached_handler_found": bool(cached_handler_found),
+            "cached_handler_close_attempted": bool(cached_handler_close_attempted),
+            "memory_cleanup_attempted": True,
+            "active_runtime_released": bool(active_llm_found or active_handler_found),
+            "cached_runtime_cleared": bool(cached_llm_found or cached_handler_found),
+        }
+
+    @classmethod
+    def _release_cached_runtime(cls, reason: str) -> None:
+        cls._best_effort_release_runtime_components(
+            None,
+            reason=reason,
+            release_cache=True,
+        )
+
+    @classmethod
+    def clear_cached_runtime(cls, reason: str = "manual free vram node") -> dict[str, Any]:
+        had_cached_runtime = False
+        had_cached_handler = False
+        with cls._cache_lock:
+            had_cached_runtime = cls._cached_llm is not None
+            had_cached_handler = cls._cached_chat_handler is not None
+        info = cls._best_effort_release_runtime_components(
+            None,
+            reason=reason,
+            release_cache=True,
+        )
+        info["had_cached_runtime"] = bool(had_cached_runtime)
+        info["had_cached_handler"] = bool(had_cached_handler)
+        info["cleared_cached_runtime"] = True
+        return info
+
+    def _release_runtime_instance(self, runtime_obj: Any, reason: str) -> None:
+        if runtime_obj is None and self._chat_handler is None:
+            return
+        _LOGGER.info("internal VLM cleanup: active llm found=%s", bool(runtime_obj is not None))
+        _LOGGER.info("internal VLM cleanup: chat handler found=%s", bool(self._chat_handler is not None))
+        self._best_effort_release_runtime_components(
+            self,
+            reason=reason,
+            release_cache=False,
+        )
+        _LOGGER.info("internal VLM cleanup complete")
+
+    @classmethod
+    def release_instance_and_cache(cls, runtime: Any, reason: str = "forced release") -> dict[str, Any]:
+        _LOGGER.info("internal VLM cleanup: active llm found=%s", bool(getattr(runtime, "_llm", None) is not None))
+        _LOGGER.info(
+            "internal VLM cleanup: chat handler found=%s",
+            bool(getattr(runtime, "_chat_handler", None) is not None),
+        )
+        info = cls._best_effort_release_runtime_components(
+            runtime,
+            reason=reason,
+            release_cache=True,
+        )
+        _LOGGER.info("internal VLM cleanup complete")
+        return info
+
+    def force_release(self, reason: str = "forced release") -> dict[str, Any]:
+        return self.__class__.release_instance_and_cache(self, reason=reason)
 
     def _filter_kwargs_for_callable(self, fn: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -487,6 +714,7 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
                 f"error={handler_error}",
             )
         self._chat_handler_name = chat_handler_name
+        self._chat_handler = chat_handler
         self._startup_debug["selected_handler"] = self._chat_handler_name
         self._startup_debug["selected_chat_handler"] = self._chat_handler_name
         if self.config.debug_mode and handler_debug:
@@ -579,8 +807,11 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
             # Some llama-cpp-python builds emit a secondary __del__/sampler AttributeError
             # after constructor failure. The primary model-load exception below is the real cause.
             self._llm = None
+            self._chat_handler = None
+            _best_effort_close_object(constructed_llm)
             chat_handler = None
             constructed_llm = None
+            _best_effort_memory_cleanup()
             self._startup_debug["constructor_exception"] = str(exc)
             environment_hint = ""
             if inferred_family == FAMILY_QWEN_VL:
@@ -594,6 +825,7 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
                 f"{self._diagnostic_prefix(stage='llama_construction', resolved_model_path=resolved_model_path, resolved_mmproj_path=resolved_mmproj_path, inferred_family=self._model_family, selected_handler=self._chat_handler_name)} | "
                 "error=llama-cpp-python recognized the family/handler, but failed to load the selected GGUF model file. "
                 "This usually indicates model/build compatibility or a bad/corrupt GGUF, not a node wiring issue. "
+                "If this happens after prior scans, memory pressure is also possible; close other GPU workloads or reduce image size and retry. "
                 f"{environment_hint}"
                 f"constructor_exception={exc}",
             )
@@ -601,33 +833,46 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
 
     def start(self) -> tuple[bool, str]:
         signature = self._signature()
+        if not self.config.keep_model_loaded:
+            self.__class__._release_cached_runtime("keep_model_loaded=OFF startup")
         if self.config.keep_model_loaded:
             with self._cache_lock:
                 if self.__class__._cached_signature == signature and self.__class__._cached_llm is not None:
+                    _LOGGER.info("gpm_internal_vlm: reusing cached runtime")
                     self._llm = self.__class__._cached_llm
+                    self._chat_handler = self.__class__._cached_chat_handler
                     return True, ""
 
+        _LOGGER.info("gpm_internal_vlm: creating runtime model=%s mmproj=%s", self.model_name, self.mmproj_name)
         llm, error = self._load_llama()
         if llm is None:
+            _LOGGER.error("gpm_internal_vlm: runtime creation failed: %s", error)
             return False, error
 
         self._llm = llm
+        _LOGGER.info("gpm_internal_vlm: runtime created")
         if self.config.keep_model_loaded:
             with self._cache_lock:
                 self.__class__._cached_signature = signature
                 self.__class__._cached_llm = llm
+                self.__class__._cached_chat_handler = self._chat_handler
         return True, ""
 
     def stop(self) -> None:
         if self.config.keep_model_loaded:
+            _LOGGER.info("gpm_internal_vlm: runtime retained (keep_model_loaded=ON)")
             return
 
         current = self._llm
-        self._llm = None
+        current_handler = self._chat_handler
         with self._cache_lock:
             if self.__class__._cached_llm is not None and self.__class__._cached_llm is current:
                 self.__class__._cached_signature = None
                 self.__class__._cached_llm = None
+                self.__class__._cached_chat_handler = None
+            if self.__class__._cached_chat_handler is not None and self.__class__._cached_chat_handler is current_handler:
+                self.__class__._cached_chat_handler = None
+        self._release_runtime_instance(current, "scan finished")
 
     def generate(self, image_path: Path, preset: dict[str, Any]) -> tuple[str, str, str]:
         if self._llm is None:
@@ -644,6 +889,7 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
         raw_response_text = ""
         parsed_person_prompt = ""
         parsed_scene_prompt = ""
+        image_input_meta: dict[str, Any] = {}
         trace_support = {
             "detected_model_family": self._detected_model_family,
             "selected_chat_handler": self._chat_handler_name,
@@ -652,8 +898,26 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
         }
 
         try:
-            image_data_url = _image_to_data_url(image_path)
+            image_data_url, image_input_meta = _build_internal_image_data_url(
+                image_path,
+                max_long_edge=_INTERNAL_SCAN_IMAGE_MAX_LONG_EDGE,
+                jpeg_quality=_INTERNAL_SCAN_IMAGE_JPEG_QUALITY,
+            )
             source_image_sha256 = self._source_image_sha256(image_path)
+        except UnidentifiedImageError as exc:
+            self._last_scan_debug_trace = {
+                "source_image_filename": source_image_filename,
+                "source_image_full_path": source_image_full_path,
+                "source_image_sha256": source_image_sha256,
+                "model_prompt_sent": user_prompt,
+                "system_prompt_sent": system_prompt,
+                "raw_model_response": "",
+                "parsed_person_prompt": "",
+                "parsed_scene_prompt": "",
+                **trace_support,
+                "error": f"image decode error: {exc}",
+            }
+            return "", "", f"image decode error: {exc}"
         except Exception as exc:
             self._last_scan_debug_trace = {
                 "source_image_filename": source_image_filename,
@@ -696,6 +960,7 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
                 "parsed_person_prompt": "",
                 "parsed_scene_prompt": "",
                 "request_image_payload_mode": image_payload_mode,
+                "request_image_input_meta": image_input_meta,
                 **trace_support,
                 "error": f"internal runtime inference failed: {exc}",
             }
@@ -714,6 +979,7 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
                 "parsed_person_prompt": "",
                 "parsed_scene_prompt": "",
                 "request_image_payload_mode": image_payload_mode,
+                "request_image_input_meta": image_input_meta,
                 **trace_support,
                 "error": "internal runtime response format was not recognized",
             }
@@ -739,6 +1005,7 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
                 "parsed_person_prompt": "",
                 "parsed_scene_prompt": "",
                 "request_image_payload_mode": image_payload_mode,
+                "request_image_input_meta": image_input_meta,
                 **trace_support,
                 "error": f"internal runtime did not return strict JSON: {raw_response_text[:600]}",
             }
@@ -746,6 +1013,7 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
 
         family = str(preset.get("family", "SDXL"))
         person_prompt, scene_prompt = _normalize_model_prompts(output_payload, family)
+        person_prompt, scene_prompt = clean_split_prompts(person_prompt, scene_prompt, family)
         person_prompt = _sanitize_person_prompt_if_environment_only(person_prompt)
         parsed_person_prompt = person_prompt
         parsed_scene_prompt = scene_prompt
@@ -759,6 +1027,7 @@ class GPMGGUFInternalRuntime(GPMVLMRuntime):
             "parsed_person_prompt": parsed_person_prompt,
             "parsed_scene_prompt": parsed_scene_prompt,
             "request_image_payload_mode": image_payload_mode,
+            "request_image_input_meta": image_input_meta,
             **trace_support,
             "error": "",
         }

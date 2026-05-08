@@ -9,8 +9,8 @@ Implemented now:
 - `GPM Gallery Browser` v1 backend prototype (folder navigation + image selection + sibling JSON load)
 - `GPM Prompt Combiner` v1 (person + scene + optional LoRA tags -> one clean prompt string)
 - `GPM VLM Scanner` v1 (recursive scan + fixed-family sidecar writes via preset-selected family)
-- `GPM VLM Scanner (Internal)` v2 (in-process `llama-cpp-python` runtime with ComfyUI model-folder dropdown UX)
-- `GPM VLM Scanner (Internal Advanced)` v1 (same in-process runtime with manual tuning controls)
+- `GPM VLM Scanner (Internal)` v2 (subprocess-isolated internal runtime with ComfyUI model-folder dropdown UX)
+- `GPM VLM Scanner (Internal Advanced)` v1 (same subprocess-isolated runtime with manual tuning controls)
 - `GPM VLM Internal Diagnostics` v1 (environment/status helper for internal GGUF multimodal support)
 - Global VLM preset storage with built-in read-only defaults (`SDXL`, `Pony`, `Natural Language`)
 
@@ -102,7 +102,7 @@ Purpose:
 ### `GPM VLM Scanner (Internal)`
 Purpose:
 - run the same scan orchestration as the API scanner through `runtime_mode=internal`
-- load GGUF VLM + mmproj directly in-process via `llama-cpp-python` (no subprocess server)
+- load GGUF VLM + mmproj in an isolated subprocess worker via `llama-cpp-python`
 - discover model files from ComfyUI model folders and expose dropdowns (`model_name`, `mmproj_name`)
 - support `mmproj_name=(auto)` matching when one clear candidate exists
 - use an explicit internal family support gate before scan execution:
@@ -111,13 +111,20 @@ Purpose:
 - use a dedicated Qwen-VL runtime path (Qwen handler + filtered llama constructor kwargs)
   - multimodal request image payload remains family-aware (`qwen_vl` uses object-style `image_url`)
 - optional `debug_mode=ON` emits concise startup compatibility diagnostics in `summary_json` when internal startup fails
+- worker exits after each scan, which is the primary VRAM release mechanism
+- `keep_model_loaded` is internal-only and always ON during a scan run (not a user-facing widget)
 
 ### `GPM VLM Scanner (Internal Advanced)`
 Purpose:
-- same internal in-process scanner flow as the basic internal node
-- exposes advanced runtime controls (`n_ctx`, `n_gpu_layers`, `temperature`, `top_p`, `max_tokens`, `threads`, `batch_size`, `keep_model_loaded`)
+- same subprocess-isolated scanner flow as the basic internal node
+- exposes advanced runtime controls (`n_ctx`, `n_gpu_layers`, `temperature`, `top_p`, `max_tokens`, `threads`, `batch_size`)
 - keeps the same no-executable-path UX as the basic internal node
 - includes optional `debug_mode` toggle with the same startup diagnostics behavior as the basic internal node
+
+Internal runtime note:
+- For internal GGUF scanning, `keep_model_loaded` is always ON internally during the scan run.
+- Both internal scanner nodes always run in subprocess mode.
+- Worker exit after each scan releases VRAM reliably.
 
 ### `GPM VLM Internal Diagnostics`
 Purpose:

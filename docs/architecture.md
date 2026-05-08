@@ -15,7 +15,7 @@ Current implemented scope includes:
 ## Major components
 
 ### 1. Scanner layer
-Status: implemented (v2, GGUF-only with API runtime plus in-process internal runtime).
+Status: implemented (v2, GGUF-only with API runtime plus subprocess-isolated internal runtime).
 
 Owns:
 - recursive image discovery under a selected root folder
@@ -28,7 +28,8 @@ Owns:
 - optional lightweight per-scan metadata under `gpm_meta`
 - shared runtime abstraction for generation while keeping one scan loop:
   - API runtime (current external/local OpenAI-compatible endpoint path)
-  - internal runtime (in-process `llama-cpp-python` vision path)
+  - internal runtime (`llama-cpp-python` vision path)
+    - execution path is subprocess-isolated worker for reliable VRAM release on worker exit
     - Qwen-VL-family models use a dedicated constructor profile (Qwen handler kwargs + filtered Llama kwargs)
     - explicit family support gate blocks unvalidated internal multimodal families before scanning
     - currently approved internal family for scan correctness: `Qwen2.5-VL`
@@ -43,6 +44,7 @@ Implemented files:
 - `gpm_vlm_runtime_api.py`
 - `gpm_vlm_runtime_internal.py`
 - `gpm_vlm_model_discovery.py`
+- `gpm_vlm_internal_worker.py`
 
 ### 2. Metadata layer
 Status: implemented for browser read path and scanner update path.
@@ -146,6 +148,11 @@ Notes:
 ### Internal scanner debug mode
 Notes:
 - `GPM VLM Scanner (Internal)` and `GPM VLM Scanner (Internal Advanced)` include optional `debug_mode` (`OFF`/`ON`).
+- internal scanner nodes now also include:
+  - `keep_model_loaded` remains hidden/internal
+  - basic internal scanner always runs in subprocess mode
+  - advanced internal scanner always runs in subprocess mode
+- in subprocess mode, the worker process performs the scan and writes output summary JSON, then exits; worker exit is the primary VRAM release mechanism
 - When `debug_mode=ON` and internal startup fails, `summary_json` includes concise startup diagnostics (llama-cpp version, inferred family, handler selection details, resolved paths, file sizes, and constructor exception text).
 - Per-image sidecar metadata contract:
   - `gpm_meta.vlm_scan` is minimal and user-facing: `family`, `preset_id`, `backend`, `runtime`, `model`, `status`, `scanned_at`.

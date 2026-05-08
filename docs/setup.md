@@ -26,9 +26,11 @@
   - if missing, installer can try a CUDA/cuBLAS wheel index path when CUDA is applicable (`jllllll` cuBLAS wheel index family)
   - if CUDA index install does not succeed, installer tries local GPM archived wheels first (`.\wheels\`, then `.\dist\gpm_wheels\`)
   - if local GPM wheel is not available, installer tries hosted GPM archived wheel download from GitHub Release before CPU fallback
+  - GPM archived CUDA wheels are installed with `--force-reinstall --no-deps` to avoid changing shared ComfyUI dependencies (for example NumPy/OpenCV/numba compatibility)
   - in `auto`/`cuda`, unsupported CUDA wheel families do not trigger local source builds; installer falls back to CPU wheel install
   - local CUDA source build is available only in `cuda-build` mode and uses a 90-minute timeout before CPU fallback
   - if CUDA wheel/source build install fails (or CUDA is not used), installer falls back to plain `pip install --upgrade llama-cpp-python`
+  - if you were affected by older installs that upgraded shared dependencies, repair NumPy with `python -m pip install "numpy<2.3.0,>=2"`
 - `requirements.txt` is intentionally minimal and does not include `llama-cpp-python`.
 - llama install mode can be overridden with:
   - `GPM_LLAMA_INSTALL_MODE=auto` (default)
@@ -131,25 +133,33 @@ $env:GPM_LLAMA_INSTALL_MODE='cuda-build'; python .\install.py
 - internal support import status (`gpm_vlm_internal_multimodal`)
 
 ## Prototype use
-1. Add `GPM VLM Scanner` for external OpenAI-compatible endpoints, or add `GPM VLM Scanner (Internal)` / `GPM VLM Scanner (Internal Advanced)` for in-process local GGUF scanning.
+1. Add `GPM VLM Scanner` for external OpenAI-compatible endpoints, or add `GPM VLM Scanner (Internal)` / `GPM VLM Scanner (Internal Advanced)` for local GGUF scanning.
 2. For internal nodes, place model files in ComfyUI model folders:
    - `ComfyUI/models/llm/`
    - `ComfyUI/models/llm/GGUF/`
    - `ComfyUI/models/GGUF/`
 3. In internal nodes, select `model_name` and `mmproj_name` from dropdowns (use `mmproj_name=(auto)` when pairing is clear).
-4. Set scanner `root_folder`, `preset_id`, and overwrite/limit controls.
-5. Use `overwrite_mode=SKIP_EXISTING` for default non-destructive scans, or `OVERWRITE_FAMILY` to replace only the selected family slot.
-6. Add `GPM Gallery Browser` node.
-7. Set `root_folder` to your top-level image folder.
-8. Keep `current_subfolder` blank for root, or set a relative subfolder.
-9. Use:
+4. Internal keep-loaded stability default:
+   - For internal GGUF scanning, `keep_model_loaded` is always ON internally for stability.
+   - Basic internal scanner always runs in subprocess mode; the worker exits at end-of-scan, which is the primary VRAM release path.
+   - Advanced internal scanner also always runs in subprocess mode.
+5. Set scanner `root_folder`, `preset_id`, and overwrite/limit controls.
+6. Use `overwrite_mode=SKIP_EXISTING` for default non-destructive scans, or `OVERWRITE_FAMILY` to replace only the selected family slot.
+7. Add `GPM Gallery Browser` node.
+8. Set `root_folder` to your top-level image folder.
+9. Keep `current_subfolder` blank for root, or set a relative subfolder.
+10. Use:
    - `action=enter_folder` + `entry_name=<folder name>` to go deeper
    - `action=back` to go to parent (stays within root)
    - `action=select_image` + `entry_name=<image file name>` to select image
-10. Read node UI feedback (`status`, `current_subfolder`, `entries`) and outputs.
-11. Add `GPM Prompt Combiner` and connect browser `person_prompt` and `scene_prompt` outputs.
-12. Optionally set `lora_tags`; use `combined_prompt` as your final positive prompt string.
-13. In browser UI, choose prompt profile (`SDXL`, `Pony`, `Natural Language`) and optional randomize mode (`OFF`, `ON`).
+11. Read node UI feedback (`status`, `current_subfolder`, `entries`) and outputs.
+12. Add `GPM Prompt Combiner` and connect browser `person_prompt` and `scene_prompt` outputs.
+13. Optionally set `lora_tags`; use `combined_prompt` as your final positive prompt string.
+14. In browser UI, choose prompt profile (`SDXL`, `Pony`, `Natural Language`) and optional randomize mode (`OFF`, `ON`).
+
+Lifecycle UI compatibility note:
+- If a workflow was saved before internal lifecycle widgets were removed/changed, re-add fresh `GPM VLM Scanner (Internal)` / `GPM VLM Scanner (Internal Advanced)` nodes after upgrading.
+- New scanner code is backward-tolerant to extra legacy kwargs, but recreating old nodes remains the safest way to avoid stale widget-state mismatches.
 
 ## Node outputs
 `GPM Gallery Browser`:

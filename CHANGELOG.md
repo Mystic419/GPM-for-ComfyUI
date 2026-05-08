@@ -28,6 +28,10 @@ All notable user-visible changes should be recorded here.
 - New `GPM VLM Scanner (Internal Advanced)` node for in-process GGUF scanning with optional runtime tuning controls.
 - New `gpm_vlm_model_discovery.py` helper for ComfyUI model-folder GGUF/mmproj discovery and mmproj auto-pairing.
 - New `GPM VLM Internal Diagnostics` node for fast environment checks (Python/platform, `llama_cpp` import/version, multimodal handler visibility, family support detection, and model/mmproj path resolution without loading models).
+- New `GPM VLM Free VRAM` node for explicit ComfyUI-style post-scan cleanup:
+  - clears GPM internal cached VLM runtime references
+  - always runs best-effort `gc.collect()` and `torch.cuda.empty_cache()` when available
+  - optional aggressive ComfyUI cleanup (`unload_all_models`, `soft_empty_cache`)
 - Optional `debug_mode` input on internal scanner nodes that adds concise startup compatibility payload fields on internal startup failure (family/handler selection path, constructor kwargs summary, resolved paths, file sizes, llama-cpp version).
 - Internal diagnostics now expose backend probe details (`backend_probe`, probe method/error, import/version), runtime request parameters (`n_gpu_layers`, `n_ctx`, `n_batch`, `threads`), selected handler/family, resolved paths, and constructor kwarg filtering results in JSON.
 - New `install.py` staged installer for dependency reliability:
@@ -38,6 +42,33 @@ All notable user-visible changes should be recorded here.
 - New import-time GPM startup dependency diagnostics block (visibility-only; no auto-pip) covering Pillow/llama_cpp/internal-support status and internal readiness.
 
 ### Changed
+- Internal scanner execution now defaults to subprocess isolation for reliable VRAM release:
+  - `GPM VLM Scanner (Internal)` now always runs scans in a subprocess worker and no longer relies on in-process lifecycle cleanup for VRAM release.
+  - `GPM VLM Scanner (Internal Advanced)` now also always runs scans in subprocess isolation.
+  - Advanced internal lifecycle controls (`execution_mode`, `unload_on_complete`) were removed from UI to prevent undesirable VRAM-retention paths.
+  - Internal scan summaries now include `internal_execution_mode`, `worker_return_code`, and `worker_elapsed_seconds` (with worker stdout/stderr tails on subprocess failure paths).
+- Internal scanner lifecycle UX now uses fixed subprocess isolation:
+  - `GPM VLM Scanner (Internal)` and `GPM VLM Scanner (Internal Advanced)` run with fixed subprocess defaults.
+  - `keep_model_loaded` remains ON internally during each scan run for stability/performance.
+  - At scan completion, when `unload_on_complete=ON`, backend now force-releases the active internal runtime instance and clears cached runtime state via `GPMGGUFInternalRuntime.release_instance_and_cache(...)`, even when `keep_model_loaded=ON`.
+  - Internal scanner `summary_json` now includes explicit lifecycle request fields:
+    - `internal_keep_model_loaded_requested`
+    - `internal_unload_on_complete_requested`
+    - `node_runtime_lifecycle_mode`
+- Internal scanner UX defaults were refined:
+  - `keep_model_loaded` was removed from scanner node UIs and is now always ON internally.
+  - `GPM VLM Scanner (Internal)` no longer exposes `unload_on_complete`; it now always unloads on completion.
+  - `GPM VLM Scanner (Internal Advanced)` no longer exposes lifecycle toggles (`execution_mode`, `unload_on_complete`); it is now runtime-tuning only.
+- `GPM VLM Free VRAM` node is no longer registered in node mappings; scanner nodes are now the primary VRAM lifecycle control path.
+- Internal scanner defaults now favor repeated-scan stability:
+  - `GPM VLM Scanner (Internal)` now defaults to `keep_model_loaded=ON`.
+  - `GPM VLM Scanner (Internal Advanced)` now defaults to `keep_model_loaded=ON` (UI label includes VRAM/stability tradeoff guidance).
+- Internal runtime now exposes a public cache-clear helper (`GPMGGUFInternalRuntime.clear_cached_runtime(...)`) for explicit workflow-controlled cleanup nodes.
+- Internal VLM runtime lifecycle and memory behavior are now explicitly managed for repeated scans:
+  - Added concise runtime lifecycle logs for create/reuse/release paths.
+  - Non-cached runs now proactively clear stale class-level cached runtimes before startup to avoid accidental retention from prior keep-loaded sessions.
+  - Runtime release now uses explicit close/shutdown best-effort cleanup plus GC/cache cleanup, instead of relying on object finalizers.
+- Internal scan image preprocessing now caps inference input to a 1024px long-edge (aspect-ratio preserved) to reduce VRAM/shared-memory pressure on large source images.
 - Reduced temporary gallery restore debug logging; kept only concise warning/fallback logs for persistence issues.
 - Project status moved from planning-only to active prototype implementation.
 - README/setup/architecture/task docs updated for the implemented browser-node scope.
@@ -104,6 +135,7 @@ All notable user-visible changes should be recorded here.
 - Startup dependency diagnostics now print one concise internal-support detail line on import failure (without traceback spam).
 - Managed global user preset ids (`sdxl_user`, `pony_user`, `natural_user`) that auto-initialize from matching built-ins when missing.
 - Preset generation setting coverage for `temperature`, `top_p`, and `max_tokens` with validation/clamping.
+- Internal `unload_on_complete` cleanup now explicitly releases multimodal chat-handler/mmproj runtime references in addition to llama runtime/cache references, with expanded runtime cleanup metadata for active/cached llm+handler release attempts.
 
 ### Removed
 - `GPM Install Dependencies` node and its registration from node mappings.

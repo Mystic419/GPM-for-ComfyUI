@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ OVERWRITE_FAMILY = "OVERWRITE_FAMILY"
 OVERWRITE_MODES = {OVERWRITE_SKIP_EXISTING, OVERWRITE_FAMILY}
 
 BACKEND_GGUF = "GGUF"
+_LOGGER = logging.getLogger(__name__)
 
 
 def _empty_summary(error: str) -> dict[str, Any]:
@@ -253,6 +255,8 @@ def _build_runtime(
     internal_batch_size: int = 512,
     internal_keep_model_loaded: bool = False,
     internal_debug_mode: bool = False,
+    internal_model_path_override: str = "",
+    internal_mmproj_path_override: str = "",
 ) -> tuple[GPMVLMRuntime | None, str]:
     if runtime_mode == RUNTIME_MODE_API:
         return (
@@ -265,14 +269,30 @@ def _build_runtime(
         )
 
     if runtime_mode == RUNTIME_MODE_INTERNAL:
-        model_path, mmproj_path, resolve_error = resolve_model_and_mmproj_paths(
-            model_name=internal_model_name,
-            mmproj_name=internal_mmproj_name,
-        )
-        if resolve_error:
-            return None, resolve_error
-        if model_path is None or mmproj_path is None:
-            return None, "internal runtime model selection failed"
+        override_model_path = Path(str(internal_model_path_override).strip()) if str(
+            internal_model_path_override
+        ).strip() else None
+        override_mmproj_path = Path(str(internal_mmproj_path_override).strip()) if str(
+            internal_mmproj_path_override
+        ).strip() else None
+        if (override_model_path is None) ^ (override_mmproj_path is None):
+            return None, "internal runtime path override requires both model and mmproj paths"
+        if override_model_path is not None and override_mmproj_path is not None:
+            model_path = override_model_path.expanduser().resolve()
+            mmproj_path = override_mmproj_path.expanduser().resolve()
+            if not model_path.exists() or not model_path.is_file():
+                return None, f"worker resolved model path was not found: {model_path}"
+            if not mmproj_path.exists() or not mmproj_path.is_file():
+                return None, f"worker resolved mmproj path was not found: {mmproj_path}"
+        else:
+            model_path, mmproj_path, resolve_error = resolve_model_and_mmproj_paths(
+                model_name=internal_model_name,
+                mmproj_name=internal_mmproj_name,
+            )
+            if resolve_error:
+                return None, resolve_error
+            if model_path is None or mmproj_path is None:
+                return None, "internal runtime model selection failed"
 
         runtime_config = GPMInternalRuntimeConfig(
             model_path=str(model_path),
@@ -319,7 +339,10 @@ def scan_images_with_preset(
     internal_threads: int = 0,
     internal_batch_size: int = 512,
     internal_keep_model_loaded: bool = False,
+    internal_unload_on_complete: bool = False,
     internal_debug_mode: bool = False,
+    internal_model_path_override: str = "",
+    internal_mmproj_path_override: str = "",
 ) -> dict[str, Any]:
     family = str(preset.get("family", "")).strip()
     if family not in FAMILY_TO_JSON_FIELDS:
@@ -338,6 +361,8 @@ def scan_images_with_preset(
     normalized_api_model_name = str(gguf_model_name).strip()
     normalized_internal_model_name = str(internal_model_name).strip()
     normalized_internal_mmproj_name = str(internal_mmproj_name).strip()
+    normalized_internal_model_path_override = str(internal_model_path_override).strip()
+    normalized_internal_mmproj_path_override = str(internal_mmproj_path_override).strip()
 
     if normalized_runtime_mode == RUNTIME_MODE_API and not normalized_api_model_name:
         return _empty_summary("gguf_model_name is required for api runtime mode")
@@ -376,13 +401,23 @@ def scan_images_with_preset(
         internal_batch_size=internal_batch_size,
         internal_keep_model_loaded=internal_keep_model_loaded,
         internal_debug_mode=internal_debug_mode,
+        internal_model_path_override=normalized_internal_model_path_override,
+        internal_mmproj_path_override=normalized_internal_mmproj_path_override,
     )
     if runtime is None:
         return _empty_summary(runtime_error or "runtime initialization failed")
 
     started_ok, started_error = runtime.start()
     if not started_ok:
-        summary = _empty_summary(started_error or "runtime startup failed")
+        start_error_text = str(started_error or "runtime startup failed")
+        if normalized_runtime_mode == RUNTIME_MODE_INTERNAL:
+            if "startup_failure_phase" in start_error_text or "during_model_construction" in start_error_text:
+                start_error_text = (
+                    "internal model/context initialization failed before inference; "
+                    "memory pressure is possible. Close other GPU workloads or reduce image size and retry. "
+                    + start_error_text
+                )
+        summary = _empty_summary(start_error_text)
         if normalized_runtime_mode == RUNTIME_MODE_INTERNAL and bool(internal_debug_mode):
             debug_fn = getattr(runtime, "startup_debug_metadata", None)
             if callable(debug_fn):
@@ -433,6 +468,19 @@ def scan_images_with_preset(
                                 summary[key] = raw_debug.get(key)
                 except Exception:
                     pass
+        try:
+            runtime.stop()
+        except Exception:
+            pass
+        if normalized_runtime_mode == RUNTIME_MODE_INTERNAL and bool(internal_unload_on_complete):
+            _LOGGER.info("internal VLM unload_on_complete: releasing active runtime")
+            cleanup_info = GPMGGUFInternalRuntime.release_instance_and_cache(
+                runtime,
+                reason="internal unload_on_complete after startup failure",
+            )
+            _LOGGER.info("internal VLM unload_on_complete: cleanup complete")
+            summary["unload_on_complete"] = True
+            summary["runtime_cleanup"] = cleanup_info
         return summary
 
     runtime_summary_metadata: dict[str, Any] = {}
@@ -454,6 +502,7 @@ def scan_images_with_preset(
     skipped = 0
     failed = 0
     warnings: list[dict[str, str]] = []
+    runtime_cleanup_info: dict[str, Any] | None = None
 
     try:
         for image_path in images:
@@ -592,7 +641,16 @@ def scan_images_with_preset(
 
             processed += 1
     finally:
-        runtime.stop()
+        try:
+            runtime.stop()
+        finally:
+            if normalized_runtime_mode == RUNTIME_MODE_INTERNAL and bool(internal_unload_on_complete):
+                _LOGGER.info("internal VLM unload_on_complete: releasing active runtime")
+                runtime_cleanup_info = GPMGGUFInternalRuntime.release_instance_and_cache(
+                    runtime,
+                    reason="internal unload_on_complete after scan_images_with_preset",
+                )
+                _LOGGER.info("internal VLM unload_on_complete: cleanup complete")
 
     summary = {
         "ok": True,
@@ -616,4 +674,11 @@ def scan_images_with_preset(
     }
     if runtime_summary_metadata:
         summary.update(runtime_summary_metadata)
+    if normalized_runtime_mode == RUNTIME_MODE_INTERNAL and bool(internal_unload_on_complete):
+        summary["unload_on_complete"] = True
+        summary["runtime_cleanup"] = runtime_cleanup_info or {
+            "requested": True,
+            "active_runtime_released": False,
+            "cached_runtime_cleared": False,
+        }
     return summary
