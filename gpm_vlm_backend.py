@@ -32,6 +32,12 @@ OVERWRITE_MODES = {OVERWRITE_SKIP_EXISTING, OVERWRITE_FAMILY}
 
 BACKEND_GGUF = "GGUF"
 _LOGGER = logging.getLogger(__name__)
+STRICT_JSON_RETRY_ATTEMPTS = 3
+
+
+def _is_retryable_strict_json_error(error: str) -> bool:
+    """Return whether a model-format failure can safely be retried."""
+    return "internal runtime did not return strict json" in str(error).casefold()
 
 
 def _empty_summary(error: str) -> dict[str, Any]:
@@ -567,23 +573,37 @@ def scan_images_with_preset(
                 break
             batch_candidates_started += 1
 
-            # Explicitly scope and reset per-image request state.
+            # Explicitly scope and reset per-image request state.  Some VLM
+            # responses occasionally miss the strict JSON contract even though
+            # the same image succeeds on a later generation.  Retry that one
+            # transient format failure before recording the image as failed.
             runtime_trace: dict[str, Any] = {}
             consume_trace_fn = getattr(runtime, "consume_last_scan_debug_trace", None)
-            if callable(consume_trace_fn):
-                try:
-                    consume_trace_fn()
-                except Exception:
-                    pass
+            for attempt in range(1, STRICT_JSON_RETRY_ATTEMPTS + 1):
+                if callable(consume_trace_fn):
+                    try:
+                        consume_trace_fn()
+                    except Exception:
+                        pass
 
-            person_prompt, scene_prompt, backend_error = runtime.generate(image_path, preset)
-            if callable(consume_trace_fn):
-                try:
-                    consumed_trace = consume_trace_fn()
-                    if isinstance(consumed_trace, dict):
-                        runtime_trace = dict(consumed_trace)
-                except Exception:
-                    runtime_trace = {}
+                person_prompt, scene_prompt, backend_error = runtime.generate(image_path, preset)
+                runtime_trace = {}
+                if callable(consume_trace_fn):
+                    try:
+                        consumed_trace = consume_trace_fn()
+                        if isinstance(consumed_trace, dict):
+                            runtime_trace = dict(consumed_trace)
+                    except Exception:
+                        runtime_trace = {}
+
+                if not _is_retryable_strict_json_error(backend_error) or attempt == STRICT_JSON_RETRY_ATTEMPTS:
+                    break
+                _LOGGER.warning(
+                    "VLM response was not strict JSON; retrying image (%d/%d): %s",
+                    attempt + 1,
+                    STRICT_JSON_RETRY_ATTEMPTS,
+                    image_path,
+                )
             if backend_error:
                 failed += 1
                 failures.append(_scan_failure_record(image_path, backend_error))

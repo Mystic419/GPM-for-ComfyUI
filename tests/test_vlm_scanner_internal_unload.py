@@ -539,6 +539,53 @@ def test_backend_keeps_runtime_when_unload_on_complete_false():
     assert "runtime_cleanup" not in summary
 
 
+def test_backend_retries_transient_strict_json_response_before_failing(tmp_path):
+    backend_mod = _load_module("gpm_vlm_backend")
+    image_path = tmp_path / "retry-me.png"
+    image_path.write_bytes(b"not-decoded-by-fake-runtime")
+
+    class _Runtime:
+        def __init__(self):
+            self.generate_calls = 0
+
+        def start(self):
+            return True, ""
+
+        def stop(self):
+            pass
+
+        def generate(self, _image_path, _preset):
+            self.generate_calls += 1
+            if self.generate_calls < 3:
+                return "", "", "internal runtime did not return strict JSON: incomplete response"
+            return "person prompt", "scene prompt", ""
+
+        def summary_metadata(self):
+            return {}
+
+    runtime = _Runtime()
+    original_discover = backend_mod._discover_images
+    original_build_runtime = backend_mod._build_runtime
+    backend_mod._discover_images = lambda _root: [image_path]
+    backend_mod._build_runtime = lambda **_kwargs: (runtime, "")
+    try:
+        summary = backend_mod.scan_images_with_preset(
+            root_folder=str(tmp_path),
+            preset={"id": "builtin-sdxl", "name": "SDXL", "family": "SDXL"},
+            gguf_model_name="fake.gguf",
+        )
+    finally:
+        backend_mod._discover_images = original_discover
+        backend_mod._build_runtime = original_build_runtime
+
+    assert runtime.generate_calls == 3
+    assert summary["processed"] == 1
+    assert summary["failed"] == 0
+    payload = json.loads(image_path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert payload["sdxl_person"] == "person prompt"
+    assert payload["sdxl_scene"] == "scene prompt"
+
+
 def test_backend_runtime_uses_absolute_override_paths_without_name_resolution():
     backend_mod = _load_module("gpm_vlm_backend")
 
