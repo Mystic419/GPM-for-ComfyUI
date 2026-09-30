@@ -4,6 +4,10 @@ All notable user-visible changes should be recorded here.
 
 ## Unreleased
 
+### Changed
+- Removed the retired external/API `GPM VLM Scanner` from the registered ComfyUI node set; the supported scanner nodes are now the internal GGUF variants.
+- Removed the user-facing `timeout_seconds` scanner widget. Internal scanning now uses a parent-side sidecar-progress watchdog: after output begins, a prolonged gap (minimum 12 seconds and adaptive to observed pace) is treated as a stalled image.
+
 ### Added
 - Built-in SDXL, Pony, and Natural Language scanner presets now request visibility-based natural skin texture and plain, anatomically accurate descriptions for clearly adult subjects.
 - `GPM VLM Prompt Saver` node-local preset-loading proof of concept:

@@ -8,7 +8,6 @@ Private prototype in progress.
 Implemented now:
 - `GPM Gallery Browser` v1 backend prototype (folder navigation + image selection + sibling JSON load)
 - `GPM Prompt Combiner` v1 (person + scene + optional LoRA tags -> one clean prompt string)
-- `GPM VLM Scanner` v1 (recursive scan + fixed-family sidecar writes via preset-selected family)
 - `GPM VLM Scanner (Internal)` v2 (subprocess-isolated internal runtime with ComfyUI model-folder dropdown UX)
 - `GPM VLM Scanner (Internal Advanced)` v1 (same subprocess-isolated runtime with manual tuning controls)
 - `GPM VLM Internal Diagnostics` v1 (environment/status helper for internal GGUF multimodal support)
@@ -68,43 +67,11 @@ Purpose:
 Output:
 - `combined_prompt`
 
-### `GPM VLM Scanner`
-Purpose:
-- recursively scan image files under a root folder
-- run GGUF VLM inference using a selected preset id
-- map preset family to fixed sidecar keys:
-  - `SDXL` -> `sdxl_person` / `sdxl_scene`
-  - `Pony` -> `pony_person` / `pony_scene`
-  - `Natural Language` -> `natural_person` / `natural_scene`
-- preserve unrelated JSON fields when writing family fields
-- support `SKIP_EXISTING` (default) and `OVERWRITE_FAMILY`
-- writes minimal scan metadata to `gpm_meta.vlm_scan`:
-  - `family`
-  - `preset_id`
-  - `backend`
-  - `runtime`
-  - `model`
-  - `status`
-  - `scanned_at`
-- when internal scanner `debug_mode=ON`, verbose runtime/debug metadata is written to `gpm_meta.vlm_scan_debug`
-  - plus per-image trace under `gpm_meta.vlm_scan_debug_trace`:
-    - `source_image_filename`
-    - `source_image_full_path`
-    - `source_image_sha256`
-    - `output_json_full_path`
-    - `model_prompt_sent`
-    - `raw_model_response`
-    - `parsed_person_prompt`
-    - `parsed_scene_prompt`
-    - `detected_model_family`
-    - `selected_chat_handler`
-    - `family_support_status`
-    - `support_reason`
-  - debug guard: if a response looks like generic family/living-room text for a likely different image type (for example storefront/cafe filename hints), scans in debug mode will warn and skip overwriting existing JSON for that image
-
 ### `GPM VLM Scanner (Internal)`
 Purpose:
 - run the same scan orchestration as the API scanner through `runtime_mode=internal`
+- recursively scan image files and write the selected family to fixed sidecar keys (`sdxl_person` / `sdxl_scene`, `pony_person` / `pony_scene`, or `natural_person` / `natural_scene`)
+- preserve unrelated JSON fields and support `SKIP_EXISTING` or `OVERWRITE_FAMILY`
 - load GGUF VLM + mmproj in an isolated subprocess worker via `llama-cpp-python`
 - discover model files from ComfyUI model folders and expose dropdowns (`model_name`, `mmproj_name`)
 - support `mmproj_name=(auto)` matching when one clear candidate exists
@@ -115,6 +82,7 @@ Purpose:
   - multimodal request image payload remains family-aware (`qwen_vl` uses object-style `image_url`)
 - optional `debug_mode=ON` emits concise startup compatibility diagnostics in `summary_json` when internal startup fails
 - worker exits after each scan, which is the primary VRAM release mechanism
+- a parent-side watchdog watches sidecar writes instead of using a guessed full-folder timeout; after scan output begins, a long gap (minimum 12 seconds, adaptive to observed pace) defers the stalled image and lets the remainder continue
 - `keep_model_loaded` is internal-only and always ON during a scan run (not a user-facing widget)
 - preset control:
   - `prompt_preset` (defaults to `builtin-sdxl`)
@@ -279,7 +247,7 @@ Advanced/manual fallback:
 4. Restart ComfyUI.
 
 Then:
-1. Add `GPM Gallery Browser`, `GPM Prompt Combiner`, and one scanner node (`GPM VLM Scanner`, `GPM VLM Scanner (Internal)`, or `GPM VLM Scanner (Internal Advanced)`) from category `GPM`.
+1. Add `GPM Gallery Browser`, `GPM Prompt Combiner`, and one internal scanner node (`GPM VLM Scanner (Internal)` or `GPM VLM Scanner (Internal Advanced)`) from category `GPM`.
 2. Set browser `root_folder`, then use `action` + `entry_name` to navigate/select.
 3. Connect browser `person_prompt` + `scene_prompt` into combiner inputs; optionally set `lora_tags`.
 

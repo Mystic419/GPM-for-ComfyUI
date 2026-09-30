@@ -10,7 +10,7 @@
 ### Supported path (ComfyUI Manager)
 1. Install **Gallery Prompt Manager** from ComfyUI Manager (GitHub/listing flow).
 2. Restart ComfyUI if Manager or your launcher asks for restart.
-3. Confirm `GPM Gallery Browser`, `GPM Prompt Combiner`, `GPM VLM Scanner`, `GPM VLM Scanner (Internal)`, and `GPM VLM Scanner (Internal Advanced)` appear under category `GPM`.
+3. Confirm `GPM Gallery Browser`, `GPM Prompt Combiner`, `GPM VLM Scanner (Internal)`, and `GPM VLM Scanner (Internal Advanced)` appear under category `GPM`.
 
 ### Advanced/manual fallback
 1. Clone this repo.
@@ -133,7 +133,7 @@ $env:GPM_LLAMA_INSTALL_MODE='cuda-build'; python .\install.py
 - internal support import status (`gpm_vlm_internal_multimodal`)
 
 ## Prototype use
-1. Add `GPM VLM Scanner` for external OpenAI-compatible endpoints, or add `GPM VLM Scanner (Internal)` / `GPM VLM Scanner (Internal Advanced)` for local GGUF scanning.
+1. Add `GPM VLM Scanner (Internal)` or `GPM VLM Scanner (Internal Advanced)` for local GGUF scanning.
 2. For internal nodes, place model files in ComfyUI model folders:
    - `ComfyUI/models/llm/`
    - `ComfyUI/models/llm/GGUF/`
@@ -192,8 +192,7 @@ pytest
 - VLM presets are stored globally in `gpm_vlm_presets.json` beside the node files and auto-created with read-only built-ins (`SDXL`, `Pony`, `Natural Language`) if missing.
 - Backend prompt-presets manager for upcoming editor integration is implemented in `gpm_vlm_prompt_presets.py` and stores user presets under `ComfyUI/user/default/GPM/vlm_prompt_presets.json` when ComfyUI user paths are available (safe fallback path is used outside ComfyUI runtime).
 - Internal scanner correctness is currently validated for `Qwen2.5-VL` only (with a vision-capable `llama-cpp-python` build).
-- `timeout_seconds` is a whole-worker scan limit, not a per-image limit. Unlimited folder scans receive a 30-minute minimum; completed sidecars are retained if a later run is needed.
-- Internal folder scans keep the VLM loaded in one worker for the full requested scan. If an image stalls hard enough to time out the worker, GPM defers that one image for the rest of the run and continues; it remains eligible for a later `SKIP_EXISTING` rescan.
+- Internal folder scans keep the VLM loaded in one worker for the full requested scan. A parent-side watchdog observes JSON sidecar progress rather than exposing a guessed whole-folder timeout: once output begins, no new sidecar for roughly three normal output intervals (minimum 12 seconds) is treated as a stalled image. The stalled image is deferred for that run and remains eligible for a later `SKIP_EXISTING` rescan.
 - Other internal multimodal families may still load, but are blocked from scan execution until validated for correctness in GPM.
 - Scanner prompt tuning/model-family prompt refinement is separate future work; install flow only manages dependency readiness.
 - Browser prompt text areas are editable; edits affect node output for the current workflow run.

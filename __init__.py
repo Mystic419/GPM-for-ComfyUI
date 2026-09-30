@@ -12,12 +12,10 @@ from .gpm_vlm_prompt_loader_node import GPMVLMPromptLoaderNode
 from .gpm_vlm_prompt_saver_node import GPMVLMPromptSaverNode
 from . import gpm_vlm_prompt_routes as _gpm_vlm_prompt_routes  # noqa: F401
 from .gpm_vlm_scanner_internal_node import GPMVLMScannerInternal, GPMVLMScannerInternalAdvanced
-from .gpm_vlm_scanner_node import GPMVLMScanner
 
 NODE_CLASS_MAPPINGS = {
     "GPM Gallery Browser": GPMGalleryBrowser,
     "GPM Prompt Combiner": GPMPromptCombiner,
-    "GPM VLM Scanner": GPMVLMScanner,
     "GPM VLM Scanner (Internal)": GPMVLMScannerInternal,
     "GPM VLM Scanner (Internal Advanced)": GPMVLMScannerInternalAdvanced,
     "GPM VLM Internal Diagnostics": GPMVLMInternalDiagnostics,
@@ -28,7 +26,6 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "GPM Gallery Browser": "GPM Gallery Browser",
     "GPM Prompt Combiner": "GPM Prompt Combiner",
-    "GPM VLM Scanner": "GPM VLM Scanner",
     "GPM VLM Scanner (Internal)": "GPM VLM Scanner (Internal)",
     "GPM VLM Scanner (Internal Advanced)": "GPM VLM Scanner (Internal Advanced)",
     "GPM VLM Internal Diagnostics": "GPM VLM Internal Diagnostics",

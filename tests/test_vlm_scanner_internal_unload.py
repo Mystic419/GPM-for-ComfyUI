@@ -36,9 +36,11 @@ def test_internal_nodes_hide_lifecycle_controls():
     assert "unload_on_complete" not in base_inputs
     assert "execution_mode" not in base_inputs
     assert "keep_model_loaded" not in base_inputs
+    assert "timeout_seconds" not in base_inputs
     assert "unload_on_complete" not in adv_inputs
     assert "execution_mode" not in adv_inputs
     assert "keep_model_loaded" not in adv_inputs
+    assert "timeout_seconds" not in adv_inputs
 
 
 def test_basic_internal_scanner_offers_all_builtin_prompt_families_by_readable_name():
@@ -347,10 +349,11 @@ def test_subprocess_path_handles_nonzero_exit():
 
     class _Completed:
         returncode = 1
-        stdout = "worker stdout text"
-        stderr = "worker stderr text"
 
-    def _fake_run(*args, **kwargs):
+        def poll(self):
+            return self.returncode
+
+    def _fake_popen(*args, **kwargs):
         cmd = args[0]
         output_json_path = ""
         for idx, part in enumerate(cmd):
@@ -361,13 +364,15 @@ def test_subprocess_path_handles_nonzero_exit():
             '{"ok": false, "error": "real worker error", "processed": 0}',
             encoding="utf-8",
         )
+        kwargs["stderr"].write("worker stderr text")
         return _Completed()
 
-    scanner_mod.subprocess.run = _fake_run
-    summary = scanner_mod._run_internal_scan_subprocess(
-        request={"preset_id": "builtin-sdxl"},
-        timeout_seconds=10,
-    )
+    original_popen = scanner_mod.subprocess.Popen
+    scanner_mod.subprocess.Popen = _fake_popen
+    try:
+        summary = scanner_mod._run_internal_scan_subprocess(request={"preset_id": "builtin-sdxl"})
+    finally:
+        scanner_mod.subprocess.Popen = original_popen
     assert summary["ok"] is False
     assert summary["error"] == "real worker error"
     assert summary["worker_return_code"] == 1
@@ -381,14 +386,16 @@ def test_subprocess_path_handles_missing_output_json():
 
     class _Completed:
         returncode = 0
-        stdout = "worker stdout"
-        stderr = ""
 
-    scanner_mod.subprocess.run = lambda *args, **kwargs: _Completed()
-    summary = scanner_mod._run_internal_scan_subprocess(
-        request={"preset_id": "builtin-sdxl"},
-        timeout_seconds=10,
-    )
+        def poll(self):
+            return self.returncode
+
+    original_popen = scanner_mod.subprocess.Popen
+    scanner_mod.subprocess.Popen = lambda *args, **kwargs: _Completed()
+    try:
+        summary = scanner_mod._run_internal_scan_subprocess(request={"preset_id": "builtin-sdxl"})
+    finally:
+        scanner_mod.subprocess.Popen = original_popen
     assert summary["ok"] is False
     assert "did not produce output JSON" in summary["error"]
     assert summary["worker_return_code"] == 0
@@ -454,7 +461,7 @@ def test_subprocess_scan_defers_stalled_candidate_and_continues_remaining_images
     def _fake_worker(*, request, timeout_seconds):
         requests.append(dict(request))
         if len(requests) == 1:
-            return {"ok": False, "worker_timed_out": True}
+            return {"ok": False, "worker_stalled": True, "worker_progress_seen": True}
         return {
             "ok": True,
             "batch_candidates_started": 2,

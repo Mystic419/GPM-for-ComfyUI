@@ -37,9 +37,13 @@ from .gpm_vlm_prompt_preset_adapter import (
 )
 
 EXECUTION_MODE_SUBPROCESS = "SUBPROCESS (Recommended: releases VRAM after scan)"
-# One worker keeps the VLM loaded for the full scan.  Timeout recovery starts
-# another worker only when a particular image stalls.
-DEFAULT_BATCH_WORKER_TIMEOUT_SECONDS = 3600
+# One worker keeps the VLM loaded for the full scan.  A parent-side watchdog
+# detects loss of scan progress instead of imposing a guessed whole-folder ETA.
+INTERNAL_RUNTIME_REQUEST_TIMEOUT_SECONDS = 180
+WATCHDOG_STARTUP_GRACE_SECONDS = 180
+WATCHDOG_MIN_IDLE_SECONDS = 12
+WATCHDOG_MAX_IDLE_SECONDS = 90
+WATCHDOG_POLL_SECONDS = 1.0
 INTERNAL_WORKER_IMAGE_BATCH_SIZE = 0
 
 
@@ -181,7 +185,7 @@ def _build_internal_scan_request(
     scan_limit: int,
     model_name: str,
     mmproj_name: str,
-    timeout_seconds: int,
+    timeout_seconds: int = 0,
     n_ctx: int,
     n_gpu_layers: int,
     temperature: float | None,
@@ -205,7 +209,7 @@ def _build_internal_scan_request(
         "mmproj_name": mmproj_name,
         "model_path_resolved": str(model_path_resolved or ""),
         "mmproj_path_resolved": str(mmproj_path_resolved or ""),
-        "timeout_seconds": int(timeout_seconds),
+        "timeout_seconds": INTERNAL_RUNTIME_REQUEST_TIMEOUT_SECONDS,
         "n_ctx": int(n_ctx),
         "n_gpu_layers": int(n_gpu_layers),
         "temperature": temperature,
@@ -290,39 +294,55 @@ def _tail_text(text: str, limit: int = 4000) -> str:
     return value[-limit:]
 
 
+def _latest_sidecar_change_ns(root_folder: str, baseline: dict[Path, int]) -> int | None:
+    """Return the newest sidecar change since the worker was launched."""
+    try:
+        root = Path(root_folder).expanduser().resolve()
+        if not root.is_dir():
+            return None
+        latest: int | None = None
+        for sidecar_path in root.rglob("*.json"):
+            try:
+                stamp = sidecar_path.stat().st_mtime_ns
+            except OSError:
+                continue
+            previous = baseline.get(sidecar_path)
+            if previous is None or stamp > previous:
+                latest = stamp if latest is None else max(latest, stamp)
+        return latest
+    except OSError:
+        return None
+
+
+def _sidecar_snapshot(root_folder: str) -> dict[Path, int]:
+    try:
+        root = Path(root_folder).expanduser().resolve()
+        if not root.is_dir():
+            return {}
+        return {
+            path: path.stat().st_mtime_ns
+            for path in root.rglob("*.json")
+            if path.is_file()
+        }
+    except OSError:
+        return {}
+
+
 def _run_internal_scan_subprocess(
     *,
     request: dict[str, Any],
-    timeout_seconds: int,
+    timeout_seconds: int = 0,
 ) -> dict[str, Any]:
     preset_id = str(request.get("preset_id", "")).strip()
     worker_path = Path(__file__).resolve().parent / "gpm_vlm_internal_worker.py"
     start_ts = time.time()
-    requested_timeout_seconds = max(5, int(timeout_seconds))
-    try:
-        scan_limit = max(0, int(request.get("scan_limit", 0)))
-    except (TypeError, ValueError):
-        scan_limit = 0
-    # The subprocess normally processes the entire requested scan with one
-    # model load.  Give an unlimited scan a practical whole-scan guardrail,
-    # while limited scans scale their allowance with the requested count.
-    worker_timeout_seconds = max(
-        requested_timeout_seconds,
-        DEFAULT_BATCH_WORKER_TIMEOUT_SECONDS if scan_limit == 0 else max(60, scan_limit * 10),
-    )
-    if worker_timeout_seconds != requested_timeout_seconds:
-        print(
-            "[GPM][internal] extended worker timeout for batch scan",
-            {
-                "requested_timeout_seconds": requested_timeout_seconds,
-                "worker_timeout_seconds": worker_timeout_seconds,
-                "scan_limit": scan_limit,
-            },
-        )
+    baseline = _sidecar_snapshot(str(request.get("root_folder", "")))
     with tempfile.TemporaryDirectory(prefix="gpm_internal_worker_") as temp_dir:
         temp_root = Path(temp_dir)
         request_path = temp_root / "request.json"
         output_path = temp_root / "output.json"
+        stdout_path = temp_root / "stdout.log"
+        stderr_path = temp_root / "stderr.log"
         request_path.write_text(json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
 
         cmd = [
@@ -334,23 +354,56 @@ def _run_internal_scan_subprocess(
             str(output_path),
         ]
         try:
-            completed = subprocess.run(
-                cmd,
-                cwd=str(Path(__file__).resolve().parent),
-                capture_output=True,
-                text=True,
-                timeout=worker_timeout_seconds,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            elapsed = round(time.time() - start_ts, 3)
-            summary = _empty_scan_error(preset_id, "internal scan worker timed out")
-            summary["worker_return_code"] = None
-            summary["worker_elapsed_seconds"] = elapsed
-            summary["worker_timed_out"] = True
-            summary["worker_stdout_tail"] = _tail_text(getattr(exc, "stdout", "") or "")
-            summary["worker_stderr_tail"] = _tail_text(getattr(exc, "stderr", "") or "")
-            return summary
+            with stdout_path.open("w", encoding="utf-8") as stdout_handle, stderr_path.open("w", encoding="utf-8") as stderr_handle:
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=str(Path(__file__).resolve().parent),
+                    stdout=stdout_handle,
+                    stderr=stderr_handle,
+                    text=True,
+                )
+                last_progress_at = start_ts
+                observed_progress = False
+                progress_intervals: list[float] = []
+                while process.poll() is None:
+                    time.sleep(WATCHDOG_POLL_SECONDS)
+                    changed_ns = _latest_sidecar_change_ns(str(request.get("root_folder", "")), baseline)
+                    now = time.time()
+                    if changed_ns is not None:
+                        if observed_progress:
+                            progress_intervals.append(now - last_progress_at)
+                            progress_intervals = progress_intervals[-8:]
+                        observed_progress = True
+                        last_progress_at = now
+                        baseline = _sidecar_snapshot(str(request.get("root_folder", "")))
+                        continue
+                    if not observed_progress:
+                        if now - start_ts <= WATCHDOG_STARTUP_GRACE_SECONDS:
+                            continue
+                        process.kill()
+                        process.wait()
+                        summary = _empty_scan_error(preset_id, "internal scan worker stalled before producing scan output")
+                        summary["worker_return_code"] = None
+                        summary["worker_elapsed_seconds"] = round(now - start_ts, 3)
+                        summary["worker_stalled"] = True
+                        summary["worker_progress_seen"] = False
+                        return summary
+                    average_interval = sum(progress_intervals) / len(progress_intervals) if progress_intervals else 4.0
+                    idle_limit = min(
+                        WATCHDOG_MAX_IDLE_SECONDS,
+                        max(WATCHDOG_MIN_IDLE_SECONDS, average_interval * 3.0),
+                    )
+                    if now - last_progress_at > idle_limit:
+                        process.kill()
+                        process.wait()
+                        summary = _empty_scan_error(preset_id, "internal scan worker stalled while processing an image")
+                        summary["worker_return_code"] = None
+                        summary["worker_elapsed_seconds"] = round(now - start_ts, 3)
+                        summary["worker_stalled"] = True
+                        summary["worker_progress_seen"] = True
+                        summary["worker_idle_limit_seconds"] = round(idle_limit, 3)
+                        return summary
+                completed_return_code = int(process.returncode or 0)
         except Exception as exc:
             elapsed = round(time.time() - start_ts, 3)
             summary = _empty_scan_error(preset_id, f"internal scan worker launch failed: {exc}")
@@ -358,40 +411,41 @@ def _run_internal_scan_subprocess(
             summary["worker_elapsed_seconds"] = elapsed
             return summary
 
+        stdout_tail = _tail_text(stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else "")
+        stderr_tail = _tail_text(stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.exists() else "")
+
         elapsed = round(time.time() - start_ts, 3)
         if not output_path.exists():
             summary = _empty_scan_error(preset_id, "internal scan worker did not produce output JSON")
-            summary["worker_return_code"] = int(completed.returncode)
+            summary["worker_return_code"] = completed_return_code
             summary["worker_elapsed_seconds"] = elapsed
-            summary["worker_stdout_tail"] = _tail_text(completed.stdout)
-            summary["worker_stderr_tail"] = _tail_text(completed.stderr)
+            summary["worker_stdout_tail"] = stdout_tail
+            summary["worker_stderr_tail"] = stderr_tail
             return summary
 
         try:
             loaded = json.loads(output_path.read_text(encoding="utf-8"))
         except Exception as exc:
             summary = _empty_scan_error(preset_id, f"internal scan worker output JSON is invalid: {exc}")
-            summary["worker_return_code"] = int(completed.returncode)
+            summary["worker_return_code"] = completed_return_code
             summary["worker_elapsed_seconds"] = elapsed
-            summary["worker_stdout_tail"] = _tail_text(completed.stdout)
-            summary["worker_stderr_tail"] = _tail_text(completed.stderr)
+            summary["worker_stdout_tail"] = stdout_tail
+            summary["worker_stderr_tail"] = stderr_tail
             return summary
 
         if not isinstance(loaded, dict):
             summary = _empty_scan_error(preset_id, "internal scan worker output JSON is not an object")
-            summary["worker_return_code"] = int(completed.returncode)
+            summary["worker_return_code"] = completed_return_code
             summary["worker_elapsed_seconds"] = elapsed
-            summary["worker_stdout_tail"] = _tail_text(completed.stdout)
-            summary["worker_stderr_tail"] = _tail_text(completed.stderr)
+            summary["worker_stdout_tail"] = stdout_tail
+            summary["worker_stderr_tail"] = stderr_tail
             return summary
 
-        loaded["worker_return_code"] = int(completed.returncode)
+        loaded["worker_return_code"] = completed_return_code
         loaded["worker_elapsed_seconds"] = elapsed
-        if completed.returncode != 0:
+        if completed_return_code != 0:
             loaded["worker_failed"] = True
-            loaded["worker_exit_error"] = f"internal scan worker exited with nonzero code ({completed.returncode})"
-            stdout_tail = _tail_text(completed.stdout)
-            stderr_tail = _tail_text(completed.stderr)
+            loaded["worker_exit_error"] = f"internal scan worker exited with nonzero code ({completed_return_code})"
             if stdout_tail:
                 loaded["worker_stdout_tail"] = stdout_tail
             if stderr_tail:
@@ -452,7 +506,7 @@ def _run_internal_scan(
     preset_payload: dict[str, Any] | None = None,
     model_name: str,
     mmproj_name: str,
-    timeout_seconds: int,
+    timeout_seconds: int = 0,
     n_ctx: int,
     n_gpu_layers: int,
     temperature: float | None,
@@ -507,7 +561,6 @@ def _run_internal_scan(
         scan_limit=scan_limit,
         model_name=model_name,
         mmproj_name=mmproj_name,
-        timeout_seconds=timeout_seconds,
         n_ctx=n_ctx,
         n_gpu_layers=n_gpu_layers,
         temperature=temperature,
@@ -532,7 +585,7 @@ def _run_internal_scan(
             # limit is still honored as one worker request.
             batch_request["scan_limit"] = remaining if remaining > 0 else 0
             batch_request["skip_first_eligible"] = deferred_timeout_candidates
-            batch_summary = subprocess_runner(request=batch_request, timeout_seconds=timeout_seconds)
+            batch_summary = subprocess_runner(request=batch_request, timeout_seconds=0)
             if not isinstance(batch_summary, dict):
                 batch_summary = _empty_scan_error(preset_id, "internal scan returned invalid worker summary payload")
 
@@ -541,7 +594,7 @@ def _run_internal_scan(
             # therefore the first remaining eligible image is the stalled one.
             # Defer it only for this execution, then continue the folder.  It is
             # intentionally left without a sidecar so a later rescan can retry it.
-            if bool(batch_summary.get("worker_timed_out", False)):
+            if bool(batch_summary.get("worker_stalled", False)) and bool(batch_summary.get("worker_progress_seen", False)):
                 deferred_timeout_candidates += 1
                 continue
             worker_summaries.append(batch_summary)
@@ -563,7 +616,7 @@ def _run_internal_scan(
             warnings.append(
                 {
                     "warning": (
-                        f"deferred {deferred_timeout_candidates} image(s) after worker timeout; "
+                        f"deferred {deferred_timeout_candidates} image(s) after a stalled worker; "
                         "they remain eligible for a later rescan"
                     )
                 }
@@ -615,16 +668,6 @@ class GPMVLMScannerInternal:
                 "write_scan_report": (WRITE_SCAN_REPORT_MODES, {"default": WRITE_SCAN_REPORT_OFF}),
                 "model_name": (model_choices, {"default": model_choices[0]}),
                 "mmproj_name": (mmproj_choices, {"default": default_mmproj}),
-                "timeout_seconds": (
-                    "INT",
-                    {
-                        "default": DEFAULT_BATCH_WORKER_TIMEOUT_SECONDS,
-                        "min": 5,
-                        "max": 7200,
-                        "step": 1,
-                        "tooltip": "Whole-scan worker limit. Unlimited scans receive a 30-minute minimum.",
-                    },
-                ),
                 "debug_mode": (["OFF", "ON"], {"default": "OFF"}),
             }
         }
@@ -643,7 +686,7 @@ class GPMVLMScannerInternal:
         write_scan_report: str = WRITE_SCAN_REPORT_OFF,
         model_name: str = "",
         mmproj_name: str = "",
-        timeout_seconds: int = DEFAULT_BATCH_WORKER_TIMEOUT_SECONDS,
+        timeout_seconds: int = 0,
         debug_mode: str = "OFF",
         **_legacy_kwargs: Any,
     ):
@@ -658,7 +701,6 @@ class GPMVLMScannerInternal:
             preset_payload=preset,
             model_name=model_name,
             mmproj_name=mmproj_name,
-            timeout_seconds=timeout_seconds,
             n_ctx=4096,
             n_gpu_layers=-1,
             temperature=None,
@@ -701,16 +743,6 @@ class GPMVLMScannerInternalAdvanced:
                 "write_scan_report": (WRITE_SCAN_REPORT_MODES, {"default": WRITE_SCAN_REPORT_OFF}),
                 "model_name": (model_choices, {"default": model_choices[0]}),
                 "mmproj_name": (mmproj_choices, {"default": default_mmproj}),
-                "timeout_seconds": (
-                    "INT",
-                    {
-                        "default": DEFAULT_BATCH_WORKER_TIMEOUT_SECONDS,
-                        "min": 5,
-                        "max": 7200,
-                        "step": 1,
-                        "tooltip": "Whole-scan worker limit. Unlimited scans receive a 30-minute minimum.",
-                    },
-                ),
                 "n_ctx": ("INT", {"default": 4096, "min": 256, "max": 32768, "step": 256}),
                 "n_gpu_layers": ("INT", {"default": -1, "min": -1, "max": 200, "step": 1}),
                 "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 2.0, "step": 0.01}),
@@ -741,7 +773,7 @@ class GPMVLMScannerInternalAdvanced:
         write_scan_report: str = WRITE_SCAN_REPORT_OFF,
         model_name: str = "",
         mmproj_name: str = "",
-        timeout_seconds: int = DEFAULT_BATCH_WORKER_TIMEOUT_SECONDS,
+        timeout_seconds: int = 0,
         n_ctx: int = 4096,
         n_gpu_layers: int = -1,
         temperature: float = 0.2,
@@ -778,7 +810,6 @@ class GPMVLMScannerInternalAdvanced:
                 preset_payload=preset,
                 model_name=model_name,
                 mmproj_name=mmproj_name,
-                timeout_seconds=timeout_seconds,
                 n_ctx=n_ctx,
                 n_gpu_layers=n_gpu_layers,
                 temperature=temperature,
