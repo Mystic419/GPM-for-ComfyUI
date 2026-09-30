@@ -1,20 +1,18 @@
 ﻿# ROADMAP
 
 ## Current phase
-Private prototype hardening and node-set expansion
+Public-release preparation and post-release hardening
 
 ## Near-term priorities
-- Finalize the v0 node set and their responsibilities
-- Refactor the existing image scanner to write sibling JSON only
-- Define the gallery node UX for image selection + prompt editing
-- Lock how prompt style, ban list, and save-to-JSON behavior work
-- Create the initial ComfyUI custom node package structure
-- Build the first verification path for local development
+- Finalize the first public node set, workflows, and installation guidance
+- Validate a clean install against the current ComfyUI release
+- Add a repository license and publish the first tagged release
+- Continue Qwen2.5-VL scan-quality regression coverage
 
 ## Mid-term goals
-- Ship a working clickable gallery browser node
-- Ship a folder scanner node with OpenAI-compatible endpoint settings
-- Expand prompt combiner with optional prompt-style controls and ban-list handling
+- Improve Gallery Browser usability for larger folders
+- Expand prompt-combiner controls where they add clear workflow value
+- Validate additional internal vision-model families before enabling them
 - Add thumbnail caching and folder refresh support
 - Add tests for JSON parsing, prompt sanitization, prompt combination, and save-back behavior
 

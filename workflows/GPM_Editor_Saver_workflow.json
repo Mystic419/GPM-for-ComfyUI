@@ -1,0 +1,326 @@
+{
+  "id": "4b11e49c-451f-4b26-8350-67efa40975a4",
+  "revision": 0,
+  "last_node_id": 15,
+  "last_link_id": 11,
+  "nodes": [
+    {
+      "id": 4,
+      "type": "GPM VLM Prompt Saver",
+      "pos": [
+        -3226,
+        2324
+      ],
+      "size": [
+        424,
+        450
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source_preset",
+          "shape": 7,
+          "type": "GPM_VLM_PROMPT_PRESET",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "status_text",
+          "type": "STRING",
+          "links": [
+            9
+          ]
+        },
+        {
+          "name": "saved_preset_id",
+          "type": "STRING",
+          "links": [
+            10
+          ]
+        },
+        {
+          "name": "preset_json",
+          "type": "STRING",
+          "links": [
+            11
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "GPM VLM Prompt Saver",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        },
+        "gpm_vlm_prompt_saver_loaded": {
+          "id": "builtin-sdxl",
+          "name": "SDXL",
+          "system_prompt": "You are a prompt extraction assistant for SDXL workflows. Return strict JSON only with exactly two string keys: person_prompt and scene_prompt. If there is no clear visible main person, person_prompt must be an empty string. If there is no clear scene/background, scene_prompt must be an empty string. Use concise comma-separated prompt fragments (not prose), describe only visible details, and keep person traits in person_prompt while keeping environment details in scene_prompt. When skin is visible, describe natural, realistic details only when supported by the image: skin texture, pores, subtle tonal variation, freckles, blemishes, blush, natural highlights, or shadows. Do not use plastic, waxy, porcelain, airbrushed, doll-like, or overly smooth skin language unless that stylization is clearly visible. For clearly adult subjects, describe visible anatomy accurately and plainly when relevant, including breasts, nipples or areolae, vulva or vaginal opening, penis, scrotum, buttocks, and body hair. Keep those details in person_prompt, never scene_prompt. Do not euphemize, omit, censor, or invent anatomy. Never infer age, sex, gender, identity, or anatomy hidden by pose, clothing, framing, or obstruction. If adult status is unclear, use only neutral, non-sexual visible body and clothing descriptions. Avoid quality/rating/source tags and avoid negative prompts.",
+          "use_ban_list": "ON",
+          "ban_list": ""
+        }
+      },
+      "widgets_values": [
+        "LOAD FROM SOURCE",
+        "SDXL",
+        "SDXL",
+        "You are a prompt extraction assistant for SDXL workflows. Return strict JSON only with exactly two string keys: person_prompt and scene_prompt. If there is no clear visible main person, person_prompt must be an empty string. If there is no clear scene/background, scene_prompt must be an empty string. Use concise comma-separated prompt fragments (not prose), describe only visible details, and keep person traits in person_prompt while keeping environment details in scene_prompt. When skin is visible, describe natural, realistic details only when supported by the image: skin texture, pores, subtle tonal variation, freckles, blemishes, blush, natural highlights, or shadows. Do not use plastic, waxy, porcelain, airbrushed, doll-like, or overly smooth skin language unless that stylization is clearly visible. For clearly adult subjects, describe visible anatomy accurately and plainly when relevant, including breasts, nipples or areolae, vulva or vaginal opening, penis, scrotum, buttocks, and body hair. Keep those details in person_prompt, never scene_prompt. Do not euphemize, omit, censor, or invent anatomy. Never infer age, sex, gender, identity, or anatomy hidden by pose, clothing, framing, or obstruction. If adult status is unclear, use only neutral, non-sexual visible body and clothing descriptions. Avoid quality/rating/source tags and avoid negative prompts.",
+        "ON",
+        "",
+        null
+      ],
+      "widgets_values_named": {
+        "action": "LOAD FROM SOURCE",
+        "load_preset": "SDXL",
+        "preset_name": "SDXL",
+        "system_prompt": "You are a prompt extraction assistant for SDXL workflows. Return strict JSON only with exactly two string keys: person_prompt and scene_prompt. If there is no clear visible main person, person_prompt must be an empty string. If there is no clear scene/background, scene_prompt must be an empty string. Use concise comma-separated prompt fragments (not prose), describe only visible details, and keep person traits in person_prompt while keeping environment details in scene_prompt. When skin is visible, describe natural, realistic details only when supported by the image: skin texture, pores, subtle tonal variation, freckles, blemishes, blush, natural highlights, or shadows. Do not use plastic, waxy, porcelain, airbrushed, doll-like, or overly smooth skin language unless that stylization is clearly visible. For clearly adult subjects, describe visible anatomy accurately and plainly when relevant, including breasts, nipples or areolae, vulva or vaginal opening, penis, scrotum, buttocks, and body hair. Keep those details in person_prompt, never scene_prompt. Do not euphemize, omit, censor, or invent anatomy. Never infer age, sex, gender, identity, or anatomy hidden by pose, clothing, framing, or obstruction. If adult status is unclear, use only neutral, non-sexual visible body and clothing descriptions. Avoid quality/rating/source tags and avoid negative prompts.",
+        "use_ban_list": "ON",
+        "ban_list": "",
+        "load_selected_preset": null
+      }
+    },
+    {
+      "id": 8,
+      "type": "Note",
+      "pos": [
+        -3660,
+        2286
+      ],
+      "size": [
+        414,
+        248
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "To edit a system prompt and save it as a user prompt select:\n\nLoad from source\n\nSelect preset:\n\nPony/SDXL/Natural Language \n\nClick \"load_selected_preset\"\n\nSet a preset name. This name will be displayed as a user preset.\n\nEdit system prompt text.\n\nInclude a banned item list if desired.\n\nWhen done editing select \"Run\"."
+      ],
+      "widgets_values_named": {
+        "text": "To edit a system prompt and save it as a user prompt select:\n\nLoad from source\n\nSelect preset:\n\nPony/SDXL/Natural Language \n\nClick \"load_selected_preset\"\n\nSet a preset name. This name will be displayed as a user preset.\n\nEdit system prompt text.\n\nInclude a banned item list if desired.\n\nWhen done editing select \"Run\"."
+      },
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 9,
+      "type": "Note",
+      "pos": [
+        -2452,
+        2284
+      ],
+      "size": [
+        210,
+        224
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "Recommended ignore list:\n\nphone\nmirror\nreflection\nhandbag\npurse\nbackpack\ncamera\nbottle\ncup\nglass\nutensils\ncigarette\numbrella\nkeys"
+      ],
+      "widgets_values_named": {
+        "text": "Recommended ignore list:\n\nphone\nmirror\nreflection\nhandbag\npurse\nbackpack\ncamera\nbottle\ncup\nglass\nutensils\ncigarette\numbrella\nkeys"
+      },
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 13,
+      "type": "PreviewAny",
+      "pos": [
+        -2788,
+        2328
+      ],
+      "size": [
+        308,
+        224
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 9
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewAny",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    },
+    {
+      "id": 14,
+      "type": "PreviewAny",
+      "pos": [
+        -2784,
+        2598
+      ],
+      "size": [
+        304,
+        176
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 10
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewAny",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    },
+    {
+      "id": 15,
+      "type": "PreviewAny",
+      "pos": [
+        -3222,
+        2814
+      ],
+      "size": [
+        740,
+        152
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 11
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewAny",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    }
+  ],
+  "links": [
+    [
+      9,
+      4,
+      0,
+      13,
+      0,
+      "STRING"
+    ],
+    [
+      10,
+      4,
+      1,
+      14,
+      0,
+      "STRING"
+    ],
+    [
+      11,
+      4,
+      2,
+      15,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 2,
+      "title": "GPM Prompt Editor/Saver",
+      "bounding": [
+        -3236,
+        2254,
+        768,
+        726
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ue_links": [],
+    "ds": {
+      "scale": 1.010048827853945,
+      "offset": [
+        3760,
+        -2184
+      ]
+    },
+    "links_added_by_ue": [],
+    "frontendVersion": "1.53.6",
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4
+}

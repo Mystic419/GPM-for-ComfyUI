@@ -33,15 +33,21 @@ def test_worker_script_bootstrap_avoids_repo_package_init():
         raise RuntimeError("failed to build worker spec")
     module = importlib.util.module_from_spec(spec)
     original_argv = sys.argv
+    preloaded_gpm_modules = {
+        name: sys.modules.pop(name)
+        for name in list(sys.modules)
+        if name == "GPM" or name.startswith("GPM.")
+    }
     sys.argv = [worker_path, "--help"]
     try:
         try:
             spec.loader.exec_module(module)
         except SystemExit:
             pass
+        assert "GPM" not in sys.modules
     finally:
         sys.argv = original_argv
-    assert "GPM" not in sys.modules
+        sys.modules.update(preloaded_gpm_modules)
 
 
 def test_worker_scan_invalid_root_returns_summary_not_import_error():

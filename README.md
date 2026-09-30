@@ -1,290 +1,155 @@
 # Gallery Prompt Manager
 
-Gallery Prompt Manager is a ComfyUI custom node pack for browsing image folders as prompt assets, scanning images into sibling JSON metadata, and combining prompt halves for reuse.
+Gallery Prompt Manager (GPM) is a ComfyUI custom-node pack for turning image folders into reusable prompt assets. It scans images with a local vision-language model, stores prompt metadata next to each image, browses those assets visually, and combines selected prompt parts into a generation prompt.
 
-## Status
-Private prototype in progress.
+> **Release status:** public-release candidate. The internal scanner is validated with **Qwen2.5-VL** GGUF model/mmproj pairs. Qwen3.x/Qwen3.5 and other multimodal families remain blocked until their image-input behavior is validated.
 
-Implemented now:
-- `GPM Gallery Browser` v1 backend prototype (folder navigation + image selection + sibling JSON load)
-- `GPM Prompt Combiner` v1 (person + scene + optional LoRA tags -> one clean prompt string)
-- `GPM VLM Scanner (Internal)` v2 (subprocess-isolated internal runtime with ComfyUI model-folder dropdown UX)
-- `GPM VLM Scanner (Internal Advanced)` v1 (same subprocess-isolated runtime with manual tuning controls)
-- `GPM VLM Internal Diagnostics` v1 (environment/status helper for internal GGUF multimodal support)
-- `GPM VLM Prompt Loader` v2 (selects source preset and emits normalized `preset_bundle`)
-- `GPM VLM Prompt Saver` v2 (stateful editable preset node with explicit load/save/update/delete modes)
-- Global VLM preset storage with built-in read-only defaults (`SDXL`, `Pony`, `Natural Language`)
-- Internal scanner preset resolution wired to backend preset manager (`gpm_vlm_prompt_presets.py`) with safe built-in fallback
+## Features
 
-Not implemented yet:
-- clickable thumbnail frontend
-- advanced prompt versioning workflows
+- Recursively scan supported images and write sibling JSON metadata.
+- Keep person/subject and scene/environment prompt parts separate.
+- Browse image folders inside ComfyUI and load metadata from selected images.
+- Select assets manually, sequentially, or through a non-repeating random cycle.
+- Combine prompt halves with optional LoRA tags.
+- Edit built-in prompt presets, create user presets, and maintain ban lists.
+- Isolate local GGUF scans in a worker process so VRAM is released when scanning ends.
 
-## Current nodes
+## Included workflows
 
-### `GPM Gallery Browser`
-Purpose:
-- browse a folder tree under a chosen root folder
-- enter folders and go back to parent folder
-- select one image file
-- load sibling JSON fields (`sdxl_person`, `sdxl_scene`) if present
+The `workflows/` directory contains importable ComfyUI examples. Click an image to open its workflow file.
 
-Supported image files:
-- `.jpg`
-- `.jpeg`
-- `.png`
-- `.webp`
-- `.bmp`
+| Workflow | Purpose |
+| --- | --- |
+| [Scanner](workflows/GPM_Scanner_workflow.json) | Configure the internal scanner and inspect its summary. |
+| [Browser and generation](workflows/GPM_browser_workflow.json) | Pick two prompt assets, combine them, and use the result in a generation graph. |
+| [Prompt editor / saver](workflows/GPM_Editor_Saver_workflow.json) | Load a preset into editable fields and save a user preset. |
 
-Ignored in browser listing:
-- non-image files
-- `.json` sidecars
+### Scan a folder
 
-JSON contract (v1):
+[![Scanner workflow](images/GPM_scanner_workflow.png)](workflows/GPM_Scanner_workflow.json)
 
-```json
-{
-  "sdxl_person": "...",
-  "sdxl_scene": "..."
-}
-```
+### Browse assets and generate
 
-Behavior on missing/invalid JSON:
-- image output still works
-- `person_prompt` output returns `""` when `sdxl_person` is missing/invalid
-- `scene_prompt` output returns `""` when `sdxl_scene` is missing/invalid
+[![Browser workflow](images/GPM_browser_workflow.png)](workflows/GPM_browser_workflow.json)
 
-Persistence behavior:
-- each `GPM Gallery Browser` node instance persists its own `root_folder`, `current_subfolder`, `selected_image_rel`, `visible_rows`, and selection mode using the ComfyUI node id
+### Edit and save a prompt preset
 
-### `GPM Prompt Combiner`
-Purpose:
-- combine `person_prompt`, `scene_prompt`, and `lora_tags` in that order
-- ignore empty inputs
-- join non-empty parts with `", "`
-- trim and normalize whitespace/comma spacing to avoid awkward separators
+[![Prompt editor and saver workflow](images/GPM_editor_saver_workflow.png)](workflows/GPM_Editor_Saver_workflow.json)
 
-Output:
-- `combined_prompt`
+## Install
 
-### `GPM VLM Scanner (Internal)`
-Purpose:
-- run the same scan orchestration as the API scanner through `runtime_mode=internal`
-- recursively scan image files and write the selected family to fixed sidecar keys (`sdxl_person` / `sdxl_scene`, `pony_person` / `pony_scene`, or `natural_person` / `natural_scene`)
-- preserve unrelated JSON fields and support `SKIP_EXISTING` or `OVERWRITE_FAMILY`
-- load GGUF VLM + mmproj in an isolated subprocess worker via `llama-cpp-python`
-- discover model files from ComfyUI model folders and expose dropdowns (`model_name`, `mmproj_name`)
-- support `mmproj_name=(auto)` matching when one clear candidate exists
-- use an explicit internal family support gate before scan execution:
-  - internal scan correctness is currently verified for `Qwen2.5-VL` only
-  - unverified families (including Gliese/Qwen3.x and other unvalidated multimodal families) are blocked with a clear startup error instead of scanning
-- use a dedicated Qwen-VL runtime path (Qwen handler + filtered llama constructor kwargs)
-  - multimodal request image payload remains family-aware (`qwen_vl` uses object-style `image_url`)
-- optional `debug_mode=ON` emits concise startup compatibility diagnostics in `summary_json` when internal startup fails
-- worker exits after each scan, which is the primary VRAM release mechanism
-- a parent-side watchdog watches sidecar writes instead of using a guessed full-folder timeout; after scan output begins, a long gap (minimum 12 seconds, adaptive to observed pace) defers the stalled image and lets the remainder continue
-- `keep_model_loaded` is internal-only and always ON during a scan run (not a user-facing widget)
-- preset control:
-  - `prompt_preset` (defaults to `builtin-sdxl`)
-  - options include SDXL, Pony, Natural Language, and user presets from backend preset manager
-  - selected preset system prompt is used for scan requests
-- scanner dropdowns show preset names; saved workflow IDs remain accepted for backward compatibility
-  - invalid/missing preset ids safely fall back to `builtin-sdxl`
+### ComfyUI Manager
 
-### `GPM VLM Scanner (Internal Advanced)`
-Purpose:
-- same subprocess-isolated scanner flow as the basic internal node
-- exposes advanced runtime controls (`n_ctx`, `n_gpu_layers`, `temperature`, `top_p`, `max_tokens`, `threads`, `batch_size`)
-- keeps the same no-executable-path UX as the basic internal node
-- includes optional `debug_mode` toggle with the same startup diagnostics behavior as the basic internal node
-- family preset controls:
-  - `sdxl_preset` (default `builtin-sdxl`)
-  - `pony_preset` (default `builtin-pony`)
-  - `natural_preset` (default `builtin-natural-language`)
-  - family toggles: `scan_sdxl`, `scan_pony`, `scan_natural`
-  - each enabled family runs with its selected preset
+If Gallery Prompt Manager is available in your ComfyUI Manager catalog, install it there and restart ComfyUI.
 
-Internal runtime note:
-- For internal GGUF scanning, `keep_model_loaded` is always ON internally during the scan run.
-- Both internal scanner nodes always run in subprocess mode.
-- Worker exit after each scan releases VRAM reliably.
+### Manual install
 
-### `GPM VLM Internal Diagnostics`
-Purpose:
-- quickly report local Python/platform + `llama_cpp` import/version status
-- inspect `llama_cpp.llama_chat_format` for multimodal handler attributes/classes
-- infer internal family from selected `model_name`
-- resolve selected `model_name`/`mmproj_name` to filesystem paths and report existence
-- report whether inferred family appears supported by the installed build
-- diagnostics only (does not load model)
+1. Clone or copy this repository to `ComfyUI/custom_nodes/GPM`.
+2. Open a terminal in the GPM folder using the same Python environment ComfyUI uses.
+3. Install normal dependencies:
 
-### `GPM VLM Prompt Loader`
-Purpose:
-- load one preset by stable preset id (built-in or user)
-- output one normalized preset bundle for Saver
-- never save/mutate/delete presets
+   ```powershell
+   python -m pip install -r .\requirements.txt
+   ```
 
-Outputs:
-- `preset_bundle` (`GPM_VLM_PROMPT_PRESET`)
-- `status_text`
-- `preset_json`
+4. Run the GPM installer for its special `llama-cpp-python` handling:
 
-### `GPM VLM Prompt Saver`
-Purpose:
-- apply explicit user actions for preset management
-- save new user presets from a source preset template
-- update existing user presets
-- delete existing user presets
+   ```powershell
+   python .\install.py
+   ```
 
-Actions:
-- `LOAD FROM SOURCE`
-- `Save As New User Preset`
-- `Update Existing User Preset`
-- `Delete User Preset`
+5. Restart ComfyUI.
 
-Notes:
-- built-ins can be loaded and used as source templates
-- built-ins cannot be updated or deleted
-- `source_preset` is a `GPM_VLM_PROMPT_PRESET` input (connect Loader `preset_bundle` with one noodle)
-- `ban_list` input is one term per line; blank lines are ignored
-- Saver updates preset storage only; scanner sidecar JSON fields are unchanged
-- `LOAD FROM SOURCE` stores source metadata in node-local saver state for later actions
-- `SAVE/UPDATE/DELETE` actions intentionally do not reload from connected Loader source to avoid overwriting edits
-- `load_preset` plus **Load selected preset into fields** is a node-local proof-of-concept path: it fetches the selected preset without queueing the graph, records the same source state as `LOAD FROM SOURCE`, and fills the editable fields
-- the button only reads presets and records the selected source; it never writes, updates, or deletes a preset
+The installer leaves a working `llama-cpp-python` install alone. See [docs/setup.md](docs/setup.md) for CUDA wheel, CPU fallback, and advanced install details.
 
-Internal model locations:
+## Validated scanner model
+
+GPM’s internal scanner is currently validated with the Qwen2.5-VL captioning GGUF family. The included scanner workflow uses this family:
+
+- [Qwen2.5-VL Abliterated Caption GGUF](https://huggingface.co/prithivMLmods/Qwen2.5-VL-Abliterated-Caption-GGUF)
+
+Use a matching model and `mmproj` from the same release. Place both under one of these directories, then refresh ComfyUI:
+
 - `ComfyUI/models/llm/`
 - `ComfyUI/models/llm/GGUF/`
 - `ComfyUI/models/GGUF/`
 
-Internal dependency note:
-- Qwen-VL GGUF internal mode requires a vision-capable `llama-cpp-python` build that supports both Qwen VL chat handlers and the corresponding llama.cpp model backend.
+Fresh scanner nodes prioritize detected Qwen2.5-VL files in the model dropdown. Qwen3.x/Qwen3.5 entries may appear if installed, but are not approved for internal scanning yet.
 
-Discovery behavior:
-- main VLM models: `*.gguf` files excluding names containing `mmproj`
-- mmproj files: `*.gguf` filenames containing `mmproj`
+## Quick start
 
-Backend preset-manager (active for internal scanner preset lookup):
-- module: `gpm_vlm_prompt_presets.py`
-- built-in presets remain read-only
-- user-editable preset file path prefers `ComfyUI/user/default/GPM/vlm_prompt_presets.json` when ComfyUI `folder_paths.user_directory` is available
-- fallback path outside ComfyUI runtime: `gpm_vlm_prompt_presets.user.json` beside the module
-- scanner adapter: `gpm_vlm_prompt_preset_adapter.py`
-  - list preset options for UI dropdowns
-  - resolve preset id with family-default fallback
-  - append ban-list guidance to system prompt only when `use_ban_list=true` and list is non-empty
+1. Import [GPM_Scanner_workflow.json](workflows/GPM_Scanner_workflow.json).
+2. Choose the Qwen2.5-VL model and matching `mmproj`.
+3. Set `root_folder` to your image folder.
+4. Leave `overwrite_mode` on `SKIP_EXISTING` for a non-destructive first run.
+5. Queue the workflow. GPM writes a JSON sidecar beside each successful image.
+6. Import [GPM_browser_workflow.json](workflows/GPM_browser_workflow.json), point the Gallery Browser nodes at your scanned folders, and select images.
 
-Prompt preset workflow (Loader -> Saver):
-1. Add `GPM VLM Prompt Loader`.
-2. Select a preset id.
-3. Connect Loader `preset_bundle` to Saver `source_preset`.
-4. In Saver set action to `LOAD FROM SOURCE`, then run once.
-5. Edit Saver fields (`preset_name`, `system_prompt`, `use_ban_list`, `ban_list`).
-6. Switch Saver action to `SAVE AS NEW USER PRESET`, `UPDATE EXISTING USER PRESET`, or `DELETE USER PRESET`, then run.
-7. During save/update/delete, Saver uses edited fields + loaded source state and does not reload from Loader input.
-8. Refresh/restart ComfyUI if preset dropdowns do not immediately show new user presets.
+The scanner keeps the model loaded for a normal scan. A parent-side watchdog observes sidecar progress instead of asking you to guess a full-folder timeout. If an image stalls after scanning has started, it is deferred for that run and remains eligible for a later `SKIP_EXISTING` rescan.
 
-Node-local load-button proof of concept:
-1. Add `GPM VLM Prompt Saver` (a Loader connection is not needed for this check).
-2. Choose a preset in `load_preset`.
-3. Press **Load selected preset into fields**.
-4. Confirm `preset_name`, `system_prompt`, `use_ban_list`, and `ban_list` fill immediately.
-5. Edit the fields, choose a save action, and run the Saver node. The button has already recorded the same server-side source state that the legacy `LOAD FROM SOURCE` action records.
+## Nodes
 
-Manual Saver UX check:
-1. Add Loader and Saver.
-2. Connect Loader `preset_bundle` to Saver `source_preset`.
-3. Select `builtin-sdxl` in Loader.
-4. Set Saver action `LOAD FROM SOURCE` and run.
-5. Confirm Saver fields visibly fill (`preset_name`, `system_prompt`, `use_ban_list`, `ban_list`).
-6. Edit `preset_name` and `system_prompt`.
-7. Set Saver action `SAVE AS NEW USER PRESET` and run.
-8. Confirm saved preset contains edited values.
-9. Change Loader selected preset and run Saver save again without running `LOAD FROM SOURCE`.
-10. Confirm Saver save does not overwrite edits from the changed Loader input.
+| Node | Use |
+| --- | --- |
+| `GPM VLM Scanner (Internal)` | Scan one selected prompt preset with the validated local GGUF runtime. |
+| `GPM VLM Scanner (Internal Advanced)` | Scan one or more prompt families with advanced runtime controls. |
+| `GPM Gallery Browser` | Browse image folders and load prompt sidecars. |
+| `GPM Prompt Combiner` | Join person, scene, and optional LoRA tags into a clean prompt. |
+| `GPM VLM Prompt Saver` | Load, edit, create, update, or delete user prompt presets. |
+| `GPM VLM Prompt Loader` | Emit a preset bundle for connected Saver workflows. |
+| `GPM VLM Internal Diagnostics` | Report local `llama_cpp`, model discovery, and multimodal-handler readiness. |
 
-Scanner usage note:
-- scanner nodes continue consuming saved presets by preset id dropdown through the existing preset adapter/backend flow.
+## Metadata format
 
-## Prototype operation model (v1)
-`GPM Gallery Browser` uses node controls for navigation:
-- `root_folder`: start/root folder
-- `current_subfolder`: active folder relative to root
-- `action`: `refresh`, `enter_folder`, `back`, `select_image`
-- `entry_name`: folder or image name in the current folder
+GPM writes prompt data in a JSON file beside the scanned image, preserving unrelated keys already present.
 
-UI feedback is returned in node UI fields:
-- status
-- current subfolder
-- folder/image listing text (`[DIR]` then `[IMG]`)
-
-Browser outputs:
-- `image`
-- `person_prompt`
-- `scene_prompt`
-- `selected_image_path`
-
-## Project structure
-- `src/` -> ComfyUI node package code
-- `tests/` -> core-logic tests
-- `docs/` -> durable project documentation
-- `scripts/` -> helper scripts and verification helpers
-- `tools/` -> external/maintenance tooling
-
-## Getting started
-
-Supported install path (recommended):
-1. Install **Gallery Prompt Manager** from ComfyUI Manager (GitHub/listing flow).
-2. Restart ComfyUI if Manager or your launcher requests it.
-3. Use `GPM VLM Internal Diagnostics` if you want a quick `llama_cpp` and internal readiness check.
-
-Advanced/manual fallback:
-1. Copy/clone this repo into `ComfyUI/custom_nodes/`.
-2. Install normal requirements in the same Python environment ComfyUI uses:
-   - `python -m pip install -r .\requirements.txt`
-3. Run `python .\install.py` (special `llama-cpp-python` wheel handling path).
-4. Restart ComfyUI.
-
-Then:
-1. Add `GPM Gallery Browser`, `GPM Prompt Combiner`, and one internal scanner node (`GPM VLM Scanner (Internal)` or `GPM VLM Scanner (Internal Advanced)`) from category `GPM`.
-2. Set browser `root_folder`, then use `action` + `entry_name` to navigate/select.
-3. Connect browser `person_prompt` + `scene_prompt` into combiner inputs; optionally set `lora_tags`.
-
-Browser UI includes:
-- prompt profile selector: `SDXL`, `Pony`, `Natural Language` (SDXL implemented end-to-end now)
-- selection selector: `Manual`, `Sequential`, `Random`
-- Sequential advances through the visible images in folder order on each queued execution. Random uses each visible image once before beginning a new shuffled cycle.
-- `Save to JSON` button for writing active profile prompt edits to the selected image sibling JSON
-
-One-time JSON migration helper:
-```powershell
-python .\scripts\migrate_prompt_keys.py <your_image_root>
+```json
+{
+  "sdxl_person": "subject description",
+  "sdxl_scene": "environment description",
+  "pony_person": "subject description",
+  "pony_scene": "environment description",
+  "natural_person": "subject description",
+  "natural_scene": "environment description"
+}
 ```
 
-## Dependency policy
-- `requirements.txt` intentionally contains only normal, low-risk dependencies.
-- `llama-cpp-python` is intentionally not listed in `requirements.txt` and is handled as a special-case install in `install.py`.
-- `install.py` checks `import llama_cpp` first:
-  - if already installed, it does not reinstall
-  - if missing, it can try CUDA/cuBLAS index path when CUDA is applicable
-  - in `auto`/`cuda`, unsupported CUDA wheel families do not trigger local source build; installer falls back to CPU wheel install
-  - local CUDA source build is advanced opt-in only via `GPM_LLAMA_INSTALL_MODE=cuda-build`
-  - if CUDA wheel or source build path is unavailable/fails, it falls back to plain `pip install --upgrade llama-cpp-python`
-- optional install mode override is available with `GPM_LLAMA_INSTALL_MODE` (`auto`, `cpu`, `cuda`, `cuda-build`).
-- on GPM module import, startup diagnostics print dependency status (`Pillow`, `llama_cpp`, internal support import, readiness) without running pip.
-- Manager installs should normally not require manual commands; `install.py` remains available for special `llama-cpp-python` wheel handling when needed.
-- Internal scanner readiness depends on both:
-  - successful `llama_cpp` import, and
-  - successful import of GPM internal support modules.
-- Scanner prompt tuning and system-prompt/model-family refinement are separate future work and are not changed by install flow.
+`SKIP_EXISTING` skips an image only when the selected prompt family already has data. `OVERWRITE_FAMILY` replaces only the selected family’s two fields.
 
-## Documentation
-- `docs/setup.md`
-- `docs/architecture.md`
-- `docs/troubleshooting.md`
-- `docs/decisions.md`
-- `ROADMAP.md`
-- `TASKS.md`
+## Prompt presets
 
+Built-in presets are available for `SDXL`, `Pony`, and `Natural Language`. They are read-only templates. User presets are stored separately at:
 
+```text
+ComfyUI/user/default/GPM/vlm_prompt_presets.json
+```
+
+Use **Load selected preset into fields** on `GPM VLM Prompt Saver`, edit the visible fields, then select a save action and queue the node. Dropdowns display readable preset names; older workflows that saved raw preset IDs remain compatible.
+
+## Troubleshooting and support
+
+- Start with `GPM VLM Internal Diagnostics` when model or `llama_cpp` setup does not behave as expected.
+- Confirm the model and `mmproj` come from the same Qwen2.5-VL release.
+- Use `debug_mode=ON` when investigating unexpected captions; it writes runtime trace data to sidecar metadata.
+- Read [docs/troubleshooting.md](docs/troubleshooting.md) for known setup and scanner issues.
+- Include your ComfyUI version, GPM commit/version, selected model/mmproj names, and relevant scanner summary when opening a bug report.
+
+## Development
+
+Run project checks from the repository root:
+
+```powershell
+.\scripts\verify.ps1
+pytest
+```
+
+Additional documentation:
+
+- [Setup guide](docs/setup.md)
+- [Architecture](docs/architecture.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Changelog](CHANGELOG.md)
+
+## Before publishing a release
+
+The code, workflows, screenshots, documentation, and verification instructions are prepared for a public release. A repository license remains a maintainer/legal choice; see [docs/public-release-checklist.md](docs/public-release-checklist.md) before creating the first public tag or GitHub release.

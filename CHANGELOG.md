@@ -4,6 +4,10 @@ All notable user-visible changes should be recorded here.
 
 ## Unreleased
 
+### Documentation
+- Added public-facing workflow examples and screenshots for scanning, gallery-browser generation, and prompt preset editing/saving.
+- Reworked the README into a public-release guide with installation, validated-model, workflow, metadata, and support information.
+
 ### Changed
 - Removed the retired external/API `GPM VLM Scanner` from the registered ComfyUI node set; the supported scanner nodes are now the internal GGUF variants.
 - Removed the user-facing `timeout_seconds` scanner widget. Internal scanning now uses a parent-side sidecar-progress watchdog: after output begins, a prolonged gap (minimum 12 seconds and adaptive to observed pace) is treated as a stalled image.
