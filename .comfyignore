@@ -1,0 +1,16 @@
+# Development and repository-maintenance files are not needed at runtime.
+.github/
+.pytest_cache/
+tests/
+tools/
+scripts/
+.tmp_*.diff
+AGENTS.md
+PROJECT_RULES.md
+TASKS.md
+
+# Local build or developer artifacts.
+dist/
+build/
+__pycache__/
+*.pyc

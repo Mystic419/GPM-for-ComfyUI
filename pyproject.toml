@@ -1,0 +1,22 @@
+[project]
+name = "gallery-prompt-manager"
+version = "1.0.0"
+description = "ComfyUI nodes for scanning image folders, browsing prompt metadata, and building reusable prompts."
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+classifiers = [
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Repository = "https://github.com/Mystic419/GPM-for-ComfyUI"
+Documentation = "https://github.com/Mystic419/GPM-for-ComfyUI#readme"
+"Bug Tracker" = "https://github.com/Mystic419/GPM-for-ComfyUI/issues"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.comfy]
+PublisherId = "mystic419"
+DisplayName = "Gallery Prompt Manager (GPM)"

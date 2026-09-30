@@ -44,7 +44,9 @@ The `workflows/` directory contains importable ComfyUI examples. Click an image 
 
 ### ComfyUI Manager
 
-If Gallery Prompt Manager is available in your ComfyUI Manager catalog, install it there and restart ComfyUI.
+Gallery Prompt Manager is packaged for the Comfy Registry as `gallery-prompt-manager`. After its first Registry release is published, install it from ComfyUI Manager and restart ComfyUI.
+
+The Registry installs the normal Python requirements. The optional internal VLM scanner additionally needs a compatible `llama-cpp-python` runtime; follow the [manual setup guide](docs/setup.md) to install the validated runtime for your hardware.
 
 ### Manual install
 

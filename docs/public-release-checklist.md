@@ -5,6 +5,7 @@ Use this checklist before publishing a tagged GPM release.
 ## Repository
 
 - [x] License selected: Apache License 2.0. Confirm `LICENSE` and `NOTICE` remain included in the release.
+- [x] Registry package metadata is prepared in `pyproject.toml` for publisher `mystic419`.
 - [ ] Review the README, included workflows, and screenshots against the current ComfyUI release.
 - [ ] Confirm no local preset data, model files, sidecars, logs, or private paths are tracked.
 - [ ] Verify `git status` contains only intentional changes.
