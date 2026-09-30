@@ -4,6 +4,10 @@ Gallery Prompt Manager (GPM) is a ComfyUI custom-node pack for turning image fol
 
 > **Release status:** public-release candidate. The internal scanner is validated with **Qwen2.5-VL** GGUF model/mmproj pairs. Qwen3.x/Qwen3.5 and other multimodal families remain blocked until their image-input behavior is validated.
 
+## License
+
+GPM is licensed under the [Apache License 2.0](LICENSE). You may use, modify, distribute, and use it commercially. Forks and redistributed versions must preserve the copyright, license, and attribution notices in [NOTICE](NOTICE), which credits Robert Scott as the original creator.
+
 ## Features
 
 - Recursively scan supported images and write sibling JSON metadata.
@@ -152,4 +156,4 @@ Additional documentation:
 
 ## Before publishing a release
 
-The code, workflows, screenshots, documentation, and verification instructions are prepared for a public release. A repository license remains a maintainer/legal choice; see [docs/public-release-checklist.md](docs/public-release-checklist.md) before creating the first public tag or GitHub release.
+The code, workflows, screenshots, documentation, and verification instructions are prepared for a public release. See [docs/public-release-checklist.md](docs/public-release-checklist.md) before creating the first public tag or GitHub release.

@@ -4,7 +4,7 @@ Use this checklist before publishing a tagged GPM release.
 
 ## Repository
 
-- [ ] Choose and add a license. This is a maintainer/legal decision; do not publish as open source without one.
+- [x] License selected: Apache License 2.0. Confirm `LICENSE` and `NOTICE` remain included in the release.
 - [ ] Review the README, included workflows, and screenshots against the current ComfyUI release.
 - [ ] Confirm no local preset data, model files, sidecars, logs, or private paths are tracked.
 - [ ] Verify `git status` contains only intentional changes.
