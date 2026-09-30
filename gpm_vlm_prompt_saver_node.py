@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .gpm_vlm_prompt_node_utils import normalize_preset_payload
+from .gpm_vlm_prompt_choice_utils import preset_choice_labels
 from .gpm_vlm_prompt_presets import delete_user_preset, save_user_preset
 
 STATE_FILE_PATH = Path(__file__).with_name("gpm_vlm_prompt_saver_state.json")
@@ -124,13 +125,7 @@ class GPMVLMPromptSaverNode:
         # This selector is intentionally separate from the Loader noodle.  It
         # powers the node-local Load button, which is a frontend proof of
         # concept and does not queue or execute the graph.
-        from .gpm_vlm_prompt_presets import get_all_presets
-
-        load_preset_ids = [
-            str(preset.get("id", "")).strip()
-            for preset in get_all_presets()
-            if isinstance(preset, dict) and str(preset.get("id", "")).strip()
-        ] or ["builtin-sdxl"]
+        load_preset_ids = preset_choice_labels()
         return {
             "required": {
                 "action": (

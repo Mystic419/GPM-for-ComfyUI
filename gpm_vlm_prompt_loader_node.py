@@ -3,18 +3,12 @@ from __future__ import annotations
 import json
 
 from .gpm_vlm_prompt_node_utils import normalize_preset_payload
-from .gpm_vlm_prompt_presets import get_all_presets, get_preset_by_id
+from .gpm_vlm_prompt_choice_utils import preset_choice_labels, preset_id_from_choice
+from .gpm_vlm_prompt_presets import get_preset_by_id
 
 
 def _preset_id_choices() -> list[str]:
-    ids: list[str] = []
-    for preset in get_all_presets():
-        if not isinstance(preset, dict):
-            continue
-        preset_id = str(preset.get("id", "")).strip()
-        if preset_id:
-            ids.append(preset_id)
-    return ids or ["builtin-sdxl"]
+    return preset_choice_labels()
 
 
 class GPMVLMPromptLoaderNode:
@@ -29,7 +23,7 @@ class GPMVLMPromptLoaderNode:
     CATEGORY = "GPM / VLM"
 
     def load(self, selected_preset: str):
-        preset_id = str(selected_preset or "").strip()
+        preset_id = preset_id_from_choice(selected_preset)
         preset = get_preset_by_id(preset_id)
         if not isinstance(preset, dict):
             status = f"Preset not found: '{preset_id}'."

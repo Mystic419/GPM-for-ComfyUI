@@ -8,12 +8,13 @@ from aiohttp import web
 from server import PromptServer
 
 from .gpm_vlm_prompt_node_utils import normalize_preset_payload
+from .gpm_vlm_prompt_choice_utils import preset_id_from_choice
 from .gpm_vlm_prompt_presets import get_preset_by_id
 from .gpm_vlm_prompt_saver_node import load_source_into_saver_state
 
 
 def _load_preset(preset_id: object) -> dict:
-    selected_id = str(preset_id or "").strip()
+    selected_id = preset_id_from_choice(preset_id)
     preset = get_preset_by_id(selected_id)
     if not isinstance(preset, dict):
         return {"ok": False, "error": "preset_not_found", "preset_id": selected_id}
