@@ -337,7 +337,10 @@ def _run_internal_scan_subprocess(
     worker_path = Path(__file__).resolve().parent / "gpm_vlm_internal_worker.py"
     start_ts = time.time()
     baseline = _sidecar_snapshot(str(request.get("root_folder", "")))
-    with tempfile.TemporaryDirectory(prefix="gpm_internal_worker_") as temp_dir:
+    # Windows security/indexing tools can briefly retain a just-closed worker
+    # log handle.  The logs are diagnostic-only, so never let their cleanup
+    # turn an otherwise completed scan into a node failure.
+    with tempfile.TemporaryDirectory(prefix="gpm_internal_worker_", ignore_cleanup_errors=True) as temp_dir:
         temp_root = Path(temp_dir)
         request_path = temp_root / "request.json"
         output_path = temp_root / "output.json"
@@ -403,6 +406,11 @@ def _run_internal_scan_subprocess(
                         summary["worker_progress_seen"] = True
                         summary["worker_idle_limit_seconds"] = round(idle_limit, 3)
                         return summary
+                # poll() has observed completion, but wait() releases the OS
+                # process handle before TemporaryDirectory cleans the logs.
+                wait_fn = getattr(process, "wait", None)
+                if callable(wait_fn):
+                    wait_fn()
                 completed_return_code = int(process.returncode or 0)
         except Exception as exc:
             elapsed = round(time.time() - start_ts, 3)
