@@ -5,6 +5,11 @@ All notable user-visible changes should be recorded here.
 ## Unreleased
 
 ### Added
+- Built-in SDXL, Pony, and Natural Language scanner presets now request visibility-based natural skin texture and plain, anatomically accurate descriptions for clearly adult subjects.
+- `GPM VLM Prompt Saver` node-local preset-loading proof of concept:
+  - a `load_preset` selector and **Load selected preset into fields** button
+  - a small read-only GPM endpoint that resolves the preset and records the same source state as `LOAD FROM SOURCE`
+  - immediate population of the editable Saver fields without queueing the workflow
 - First private prototype implementation of `GPM Gallery Browser` node.
 - Folder navigation helpers that keep traversal inside a chosen root folder.
 - Image filtering for `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`.
@@ -14,11 +19,41 @@ All notable user-visible changes should be recorded here.
 - First private prototype implementation of `GPM Prompt Combiner` node.
 - Prompt combiner core helper/tests for ordered merge of person + scene + optional LoRA tags with separator cleanup.
 - Prompt-profile-ready gallery UI controls: `SDXL`, `Pony`, `Natural Language`.
-- Gallery randomizer controls: `OFF`, `ON`.
+- Gallery selection controls: persistent `Manual`, `Sequential`, and non-repeating-cycle `Random`; automated selections show a green active-image highlight.
 - One-time migration script `scripts/migrate_prompt_keys.py` for JSON key rename.
 - Manual `Save to JSON` action in gallery browser UI to persist active-profile prompt edits for the currently selected image.
 - First implementation of `GPM VLM Scanner` node with recursive root-folder image discovery and GGUF-only backend mode.
 - New preset manager helper module `gpm_vlm_presets.py` with global `gpm_vlm_presets.json` storage and built-in read-only presets (`SDXL`, `Pony`, `Natural Language`).
+- New backend-only VLM prompt preset manager module `gpm_vlm_prompt_presets.py` for upcoming editor/dropdown integration:
+  - read-only built-ins (`builtin-sdxl`, `builtin-pony`, `builtin-natural-language`)
+  - user-editable presets saved to ComfyUI user data when available (`ComfyUI/user/default/GPM/vlm_prompt_presets.json`)
+  - safe malformed-JSON fallback with status warning, plus atomic user preset writes
+  - helper APIs for load/get/save/clone/delete/validate workflows
+- New `GPM VLM Prompt Editor` utility node:
+  - main UI actions are now `Preview Selected`, `Clone Selected As User Preset`, `Save User Preset`, and `Delete User Preset`
+  - legacy action aliases remain compatible (`Load` -> `Preview Selected`, `Clone Selected` -> `Clone Selected As User Preset`)
+  - no longer exposes `family` or custom preset-id inputs in normal required UI fields
+  - resolves family directly from `selected_preset` to prevent mismatched family edits
+  - save from built-ins now auto-creates `user-*` presets without requiring user-typed IDs
+  - returns split preview/edit outputs (`preset_name_out`, `family_out`, `system_prompt_out`, `use_ban_list_out`, `ban_list_out`) for copy/paste workflows
+  - preview status now explicitly explains ComfyUI widget limitation (node outputs cannot auto-fill this node's own inputs)
+  - uses stable preset ids from backend preset manager
+  - enforces built-in protection (built-ins are loadable/cloneable but not overwritable/deletable)
+  - parses multiline ban-list text into normalized `list[str]` when saving user presets
+  - returns friendly status + pretty JSON payloads instead of raising on normal user mistakes
+- New `GPM VLM Prompt Loader` utility node:
+  - loads selected preset id and returns a normalized `preset_bundle` (`GPM_VLM_PROMPT_PRESET`) plus status/json
+  - read-only behavior (no save/delete/mutation)
+  - friendly missing-preset status output
+- New `GPM VLM Prompt Saver` utility node:
+  - explicit actions: `LOAD FROM SOURCE`, `SAVE AS NEW USER PRESET`, `UPDATE EXISTING USER PRESET`, `DELETE USER PRESET`
+  - built-ins can be used as templates for save-as-new, but are blocked from update/delete
+  - source is connected as one custom bundle input from Loader (`source_preset`)
+  - node-local source metadata is persisted by node unique id after `LOAD FROM SOURCE`
+  - save/update/delete actions intentionally ignore live source input to prevent overwriting edited Saver fields
+  - multiline ban-list text is normalized to `list[str]` while preserving terms even when `use_ban_list=OFF`
+- Scanner preset dropdowns now show readable preset names instead of internal `user-…` IDs while continuing to resolve the stable IDs internally.
+- Internal scanner worker timeout is now batch-aware: unlimited scans receive a 30-minute minimum and finite scan limits scale the worker allowance with the requested image count.
 - New scanner backend helper module `gpm_vlm_backend.py` for family-slot mapping, skip/overwrite logic, robust scan summaries, and sidecar JSON updates that preserve unrelated fields.
 - Runtime abstraction groundwork for scanner backends with shared orchestration:
   - `gpm_vlm_runtime_base.py`
@@ -42,6 +77,16 @@ All notable user-visible changes should be recorded here.
 - New import-time GPM startup dependency diagnostics block (visibility-only; no auto-pip) covering Pillow/llama_cpp/internal-support status and internal readiness.
 
 ### Changed
+- Internal scanner preset plumbing now uses backend preset manager data (`gpm_vlm_prompt_presets.py`) through a compatibility adapter:
+  - `GPM VLM Scanner (Internal)` now uses `prompt_preset` (default `builtin-sdxl`) and resolves built-in/user preset ids safely.
+  - `GPM VLM Scanner (Internal Advanced)` now supports per-family preset selection (`sdxl_preset`, `pony_preset`, `natural_preset`) with family toggles (`scan_sdxl`, `scan_pony`, `scan_natural`).
+  - invalid/missing preset ids and malformed user preset JSON now fall back to family-appropriate built-ins without crashing scans.
+  - internal scanner/worker preset payload flow now passes resolved preset objects directly into subprocess requests for consistent behavior.
+  - when a preset enables ban-list use, a short ban-list instruction is appended to the effective system prompt at runtime (without changing sidecar JSON schema).
+- Prompt preset UX has been split from one all-in-one editor into a two-node workflow:
+  - `GPM VLM Prompt Loader` for loading/outputting fields
+  - `GPM VLM Prompt Saver` for explicit save/update/delete actions
+  - legacy all-in-one editor node is no longer registered in ComfyUI node mappings
 - Internal scanner execution now defaults to subprocess isolation for reliable VRAM release:
   - `GPM VLM Scanner (Internal)` now always runs scans in a subprocess worker and no longer relies on in-process lifecycle cleanup for VRAM release.
   - `GPM VLM Scanner (Internal Advanced)` now also always runs scans in subprocess isolation.

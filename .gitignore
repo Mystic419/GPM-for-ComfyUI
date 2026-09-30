@@ -49,6 +49,7 @@ docs/decisions.md
 docs/troubleshooting.md
 scripts/new-session-note.ps1
 scripts/update-docs-check.ps1
+gpm_vlm_prompt_saver_state.json
 
 # Local/large AI artifacts
 *.gguf

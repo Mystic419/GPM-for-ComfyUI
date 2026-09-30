@@ -8,6 +8,9 @@ except Exception as exc:
 from .gpm_gallery_browser_node import GPMGalleryBrowser
 from .gpm_prompt_combiner_node import GPMPromptCombiner
 from .gpm_vlm_internal_diagnostics_node import GPMVLMInternalDiagnostics
+from .gpm_vlm_prompt_loader_node import GPMVLMPromptLoaderNode
+from .gpm_vlm_prompt_saver_node import GPMVLMPromptSaverNode
+from . import gpm_vlm_prompt_routes as _gpm_vlm_prompt_routes  # noqa: F401
 from .gpm_vlm_scanner_internal_node import GPMVLMScannerInternal, GPMVLMScannerInternalAdvanced
 from .gpm_vlm_scanner_node import GPMVLMScanner
 
@@ -18,6 +21,8 @@ NODE_CLASS_MAPPINGS = {
     "GPM VLM Scanner (Internal)": GPMVLMScannerInternal,
     "GPM VLM Scanner (Internal Advanced)": GPMVLMScannerInternalAdvanced,
     "GPM VLM Internal Diagnostics": GPMVLMInternalDiagnostics,
+    "GPM VLM Prompt Loader": GPMVLMPromptLoaderNode,
+    "GPM VLM Prompt Saver": GPMVLMPromptSaverNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -27,6 +32,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GPM VLM Scanner (Internal)": "GPM VLM Scanner (Internal)",
     "GPM VLM Scanner (Internal Advanced)": "GPM VLM Scanner (Internal Advanced)",
     "GPM VLM Internal Diagnostics": "GPM VLM Internal Diagnostics",
+    "GPM VLM Prompt Loader": "GPM VLM Prompt Loader",
+    "GPM VLM Prompt Saver": "GPM VLM Prompt Saver",
 }
 
 WEB_DIRECTORY = "./web"

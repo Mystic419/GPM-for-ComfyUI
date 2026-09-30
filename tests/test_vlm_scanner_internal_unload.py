@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import sys
 import types
@@ -36,6 +37,14 @@ def test_internal_nodes_hide_lifecycle_controls():
     assert "execution_mode" not in base_inputs
     assert "unload_on_complete" not in adv_inputs
     assert "execution_mode" not in adv_inputs
+
+
+def test_basic_internal_scanner_offers_all_builtin_prompt_families_by_readable_name():
+    scanner_mod = _load_module("gpm_vlm_scanner_internal_node")
+    prompt_choices = scanner_mod.GPMVLMScannerInternal.INPUT_TYPES()["required"]["prompt_preset"][0]
+    assert "SDXL" in prompt_choices
+    assert "Pony" in prompt_choices
+    assert "Natural Language" in prompt_choices
     assert "keep_model_loaded" not in base_inputs
     assert "keep_model_loaded" not in adv_inputs
 
@@ -517,3 +526,267 @@ def test_backend_runtime_missing_absolute_override_model_path_has_clear_error():
     )
     assert runtime is None
     assert str(runtime_error).startswith("worker resolved model path was not found:")
+
+
+def test_basic_scan_calls_internal_scan_once_without_warning():
+    scanner_mod = _load_module("gpm_vlm_scanner_internal_node")
+    node = scanner_mod.GPMVLMScannerInternal()
+    calls = {"count": 0}
+    original_resolve = scanner_mod._resolve_runtime_preset
+    original_run = scanner_mod._run_internal_scan
+
+    try:
+        scanner_mod._resolve_runtime_preset = lambda _preset_id, _family: (
+            {"id": "builtin-sdxl", "family": "SDXL", "system_prompt": "x"},
+            "",
+        )
+
+        def _fake_run_internal_scan(**_kwargs):
+            calls["count"] += 1
+            return '{"ok": true, "processed": 1}', "scan ok"
+
+        scanner_mod._run_internal_scan = _fake_run_internal_scan
+        summary_json, status_text = node.scan(
+            root_folder=".",
+            prompt_preset="builtin-sdxl",
+            overwrite_mode="SKIP_EXISTING",
+            scan_limit=0,
+            write_scan_report="OFF",
+            model_name="m.gguf",
+            mmproj_name="mmproj.gguf",
+            timeout_seconds=30,
+            debug_mode="OFF",
+        )
+        assert calls["count"] == 1
+        assert status_text == "scan ok"
+        payload = json.loads(summary_json)
+        assert payload["ok"] is True
+        assert payload["processed"] == 1
+    finally:
+        scanner_mod._resolve_runtime_preset = original_resolve
+        scanner_mod._run_internal_scan = original_run
+
+
+def test_basic_scan_calls_internal_scan_once_with_warning():
+    scanner_mod = _load_module("gpm_vlm_scanner_internal_node")
+    node = scanner_mod.GPMVLMScannerInternal()
+    calls = {"count": 0}
+    original_resolve = scanner_mod._resolve_runtime_preset
+    original_run = scanner_mod._run_internal_scan
+
+    try:
+        scanner_mod._resolve_runtime_preset = lambda _preset_id, _family: (
+            {"id": "builtin-sdxl", "family": "SDXL", "system_prompt": "x"},
+            "warning: fallback used",
+        )
+
+        def _fake_run_internal_scan(**_kwargs):
+            calls["count"] += 1
+            return '{"ok": true, "processed": 2}', "scan ok"
+
+        scanner_mod._run_internal_scan = _fake_run_internal_scan
+        summary_json, status_text = node.scan(
+            root_folder=".",
+            prompt_preset="invalid-id",
+            overwrite_mode="SKIP_EXISTING",
+            scan_limit=0,
+            write_scan_report="OFF",
+            model_name="m.gguf",
+            mmproj_name="mmproj.gguf",
+            timeout_seconds=30,
+            debug_mode="OFF",
+        )
+        assert calls["count"] == 1
+        assert "scan ok" in status_text
+        assert "warning: fallback used" in status_text
+        payload = json.loads(summary_json)
+        assert payload["ok"] is True
+        assert payload["processed"] == 2
+    finally:
+        scanner_mod._resolve_runtime_preset = original_resolve
+        scanner_mod._run_internal_scan = original_run
+
+
+def test_advanced_scan_call_count_matches_enabled_families():
+    scanner_mod = _load_module("gpm_vlm_scanner_internal_node")
+    node = scanner_mod.GPMVLMScannerInternalAdvanced()
+    calls = {"count": 0, "preset_ids": []}
+    original_resolve = scanner_mod._resolve_runtime_preset
+    original_run = scanner_mod._run_internal_scan
+
+    def _fake_resolve_runtime_preset(preset_id, _fallback_family):
+        return (
+            {"id": str(preset_id), "family": "SDXL", "system_prompt": "x"},
+            "",
+        )
+
+    def _fake_run_internal_scan(**kwargs):
+        calls["count"] += 1
+        calls["preset_ids"].append(str(kwargs.get("preset_id", "")))
+        return '{"ok": true, "processed": 1, "failed": 0, "skipped": 0}', "scan ok"
+
+    try:
+        scanner_mod._resolve_runtime_preset = _fake_resolve_runtime_preset
+        scanner_mod._run_internal_scan = _fake_run_internal_scan
+
+        summary_json_1, _ = node.scan(
+            root_folder=".",
+            scan_sdxl="ON",
+            scan_pony="OFF",
+            scan_natural="OFF",
+            sdxl_preset="builtin-sdxl",
+            pony_preset="builtin-pony",
+            natural_preset="builtin-natural-language",
+            model_name="m.gguf",
+            mmproj_name="mmproj.gguf",
+        )
+        assert calls["count"] == 1
+        payload_1 = json.loads(summary_json_1)
+        assert payload_1.get("requested_family") == "SDXL"
+
+        calls["count"] = 0
+        calls["preset_ids"] = []
+        summary_json_2, _ = node.scan(
+            root_folder=".",
+            scan_sdxl="ON",
+            scan_pony="ON",
+            scan_natural="OFF",
+            sdxl_preset="builtin-sdxl",
+            pony_preset="builtin-pony",
+            natural_preset="builtin-natural-language",
+            model_name="m.gguf",
+            mmproj_name="mmproj.gguf",
+        )
+        assert calls["count"] == 2
+        payload_2 = json.loads(summary_json_2)
+        assert isinstance(payload_2.get("scan_runs"), list)
+        assert len(payload_2["scan_runs"]) == 2
+
+        calls["count"] = 0
+        calls["preset_ids"] = []
+        summary_json_3, _ = node.scan(
+            root_folder=".",
+            scan_sdxl="ON",
+            scan_pony="ON",
+            scan_natural="ON",
+            sdxl_preset="builtin-sdxl",
+            pony_preset="builtin-pony",
+            natural_preset="builtin-natural-language",
+            model_name="m.gguf",
+            mmproj_name="mmproj.gguf",
+        )
+        assert calls["count"] == 3
+        payload_3 = json.loads(summary_json_3)
+        assert isinstance(payload_3.get("scan_runs"), list)
+        assert len(payload_3["scan_runs"]) == 3
+    finally:
+        scanner_mod._resolve_runtime_preset = original_resolve
+        scanner_mod._run_internal_scan = original_run
+
+
+def test_advanced_warning_does_not_duplicate_scan_and_merges_status():
+    scanner_mod = _load_module("gpm_vlm_scanner_internal_node")
+    node = scanner_mod.GPMVLMScannerInternalAdvanced()
+    calls = {"count": 0}
+    original_resolve = scanner_mod._resolve_runtime_preset
+    original_run = scanner_mod._run_internal_scan
+
+    def _fake_resolve_runtime_preset(preset_id, fallback_family):
+        warning = "warning: fallback used" if fallback_family == "pony" else ""
+        return (
+            {"id": str(preset_id), "family": "Pony", "system_prompt": "x"},
+            warning,
+        )
+
+    def _fake_run_internal_scan(**_kwargs):
+        calls["count"] += 1
+        return '{"ok": true, "processed": 1, "failed": 0, "skipped": 0}', "scan ok"
+
+    try:
+        scanner_mod._resolve_runtime_preset = _fake_resolve_runtime_preset
+        scanner_mod._run_internal_scan = _fake_run_internal_scan
+        summary_json, status_text = node.scan(
+            root_folder=".",
+            scan_sdxl="OFF",
+            scan_pony="ON",
+            scan_natural="OFF",
+            sdxl_preset="builtin-sdxl",
+            pony_preset="invalid-pony",
+            natural_preset="builtin-natural-language",
+            model_name="m.gguf",
+            mmproj_name="mmproj.gguf",
+        )
+        assert calls["count"] == 1
+        assert "warning: fallback used" in status_text
+        payload = json.loads(summary_json)
+        assert payload["ok"] is True
+    finally:
+        scanner_mod._resolve_runtime_preset = original_resolve
+        scanner_mod._run_internal_scan = original_run
+
+
+def test_basic_malformed_user_preset_fallback_does_not_duplicate_scan(tmp_path, monkeypatch):
+    scanner_mod = _load_module("gpm_vlm_scanner_internal_node")
+    node = scanner_mod.GPMVLMScannerInternal()
+    calls = {"count": 0}
+    (tmp_path / "vlm_prompt_presets.json").write_text("{bad json", encoding="utf-8")
+    monkeypatch.setenv("GPM_USER_DATA_DIR", str(tmp_path))
+
+    def _fake_run_internal_scan(**_kwargs):
+        calls["count"] += 1
+        return '{"ok": true, "processed": 1}', "scan ok"
+
+    original_run = scanner_mod._run_internal_scan
+    try:
+        scanner_mod._run_internal_scan = _fake_run_internal_scan
+        summary_json, status_text = node.scan(
+            root_folder=".",
+            prompt_preset="builtin-sdxl",
+            overwrite_mode="SKIP_EXISTING",
+            scan_limit=0,
+            write_scan_report="OFF",
+            model_name="m.gguf",
+            mmproj_name="mmproj.gguf",
+            timeout_seconds=30,
+            debug_mode="OFF",
+        )
+        assert calls["count"] == 1
+        assert "warning:" in status_text.lower()
+        payload = json.loads(summary_json)
+        assert payload["ok"] is True
+    finally:
+        scanner_mod._run_internal_scan = original_run
+
+
+def test_advanced_malformed_user_preset_fallback_runs_once_per_enabled_family(tmp_path, monkeypatch):
+    scanner_mod = _load_module("gpm_vlm_scanner_internal_node")
+    node = scanner_mod.GPMVLMScannerInternalAdvanced()
+    calls = {"count": 0}
+    (tmp_path / "vlm_prompt_presets.json").write_text("{bad json", encoding="utf-8")
+    monkeypatch.setenv("GPM_USER_DATA_DIR", str(tmp_path))
+
+    def _fake_run_internal_scan(**_kwargs):
+        calls["count"] += 1
+        return '{"ok": true, "processed": 1, "failed": 0, "skipped": 0}', "scan ok"
+
+    original_run = scanner_mod._run_internal_scan
+    try:
+        scanner_mod._run_internal_scan = _fake_run_internal_scan
+        summary_json, status_text = node.scan(
+            root_folder=".",
+            scan_sdxl="ON",
+            scan_pony="ON",
+            scan_natural="OFF",
+            sdxl_preset="builtin-sdxl",
+            pony_preset="builtin-pony",
+            natural_preset="builtin-natural-language",
+            model_name="m.gguf",
+            mmproj_name="mmproj.gguf",
+        )
+        assert calls["count"] == 2
+        assert "warning:" in status_text.lower()
+        payload = json.loads(summary_json)
+        assert payload["ok"] is True
+        assert len(payload["scan_runs"]) == 2
+    finally:
+        scanner_mod._run_internal_scan = original_run

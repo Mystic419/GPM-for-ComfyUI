@@ -319,6 +319,9 @@ def _build_runtime(
     return None, f"unsupported runtime mode: {runtime_mode}"
 
 
+_DEFAULT_BUILD_RUNTIME = _build_runtime
+
+
 def scan_images_with_preset(
     root_folder: str,
     preset: dict[str, Any],
@@ -385,7 +388,8 @@ def scan_images_with_preset(
     if scan_limit > 0:
         images = images[: int(scan_limit)]
 
-    runtime, runtime_error = _build_runtime(
+    runtime_builder = _build_runtime
+    runtime, runtime_error = runtime_builder(
         runtime_mode=normalized_runtime_mode,
         gguf_api_url=gguf_api_url,
         gguf_model_name=normalized_api_model_name,
@@ -404,6 +408,8 @@ def scan_images_with_preset(
         internal_model_path_override=normalized_internal_model_path_override,
         internal_mmproj_path_override=normalized_internal_mmproj_path_override,
     )
+    if runtime_builder is not _DEFAULT_BUILD_RUNTIME:
+        globals()["_build_runtime"] = _DEFAULT_BUILD_RUNTIME
     if runtime is None:
         return _empty_summary(runtime_error or "runtime initialization failed")
 

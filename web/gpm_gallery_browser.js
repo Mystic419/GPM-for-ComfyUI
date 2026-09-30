@@ -7,9 +7,11 @@ const MIN_VISIBLE_ROWS = 1;
 const MAX_VISIBLE_ROWS = 6;
 const DEFAULT_VISIBLE_ROWS = 3;
 const DEFAULT_PROMPT_PROFILE = "SDXL";
-const RANDOMIZE_OFF = "OFF";
-const RANDOMIZE_ON = "ON";
-const RANDOMIZE_OPTIONS = [RANDOMIZE_OFF, RANDOMIZE_ON];
+const SELECTION_MANUAL = "MANUAL";
+const SELECTION_SEQUENTIAL = "SEQUENTIAL";
+const SELECTION_RANDOM = "RANDOM";
+const SELECTION_OPTIONS = [SELECTION_MANUAL, SELECTION_SEQUENTIAL, SELECTION_RANDOM];
+const LEGACY_SELECTION_MODES = { OFF: SELECTION_MANUAL, ON: SELECTION_RANDOM };
 const PROMPT_PROFILES = {
   SDXL: { personKey: "sdxl_person", sceneKey: "sdxl_scene" },
   Pony: { personKey: "pony_person", sceneKey: "pony_scene" },
@@ -120,6 +122,12 @@ function injectStylesOnce() {
       border: 2px solid #ff2d2d;
       box-shadow: 0 0 0 1px rgba(255, 45, 45, 0.65), 0 0 12px rgba(255, 45, 45, 0.25);
       background: #2a1f1f;
+    }
+
+    .gpm-gallery-tile.active {
+      border: 2px solid #4fd37d;
+      box-shadow: 0 0 0 1px rgba(79, 211, 125, 0.65), 0 0 14px rgba(79, 211, 125, 0.32);
+      background: #1d2a22;
     }
 
     .gpm-gallery-thumb {
@@ -247,7 +255,11 @@ function normalizePromptProfile(value) {
 }
 
 function normalizeRandomizeMode(value) {
-  return RANDOMIZE_OPTIONS.includes(value) ? value : RANDOMIZE_OFF;
+  const normalized = String(value || "").trim().toUpperCase();
+  if (Object.prototype.hasOwnProperty.call(LEGACY_SELECTION_MODES, normalized)) {
+    return LEGACY_SELECTION_MODES[normalized];
+  }
+  return SELECTION_OPTIONS.includes(normalized) ? normalized : SELECTION_MANUAL;
 }
 
 function getProfilePrompts(state, profileName) {
@@ -302,7 +314,7 @@ app.registerExtension({
         visibleRows: clampVisibleRows(visibleRowsWidget?.value ?? DEFAULT_VISIBLE_ROWS),
         items: [],
         promptProfile: normalizePromptProfile(String(promptProfileWidget?.value || DEFAULT_PROMPT_PROFILE)),
-        randomizeMode: normalizeRandomizeMode(String(randomizeModeWidget?.value || RANDOMIZE_OFF)),
+        randomizeMode: normalizeRandomizeMode(String(randomizeModeWidget?.value || SELECTION_MANUAL)),
         prompts: emptyProfilePrompts(),
         promptCache: {},
         error: "",
@@ -366,6 +378,7 @@ app.registerExtension({
               current_subfolder: state.currentSubfolder,
               selected_image_rel: state.selectedImageRel,
               visible_rows: state.visibleRows,
+              randomize_mode: state.randomizeMode,
             }),
           });
         } catch {
@@ -393,6 +406,9 @@ app.registerExtension({
           }
           if (payload.visible_rows !== undefined && payload.visible_rows !== null) {
             state.visibleRows = clampVisibleRows(payload.visible_rows);
+          }
+          if (typeof payload.randomize_mode === "string") {
+            state.randomizeMode = normalizeRandomizeMode(payload.randomize_mode);
           }
           setWidgets();
         } catch {
@@ -430,15 +446,15 @@ app.registerExtension({
 
       const randomizeLabel = document.createElement("div");
       randomizeLabel.className = "gpm-gallery-label";
-      randomizeLabel.textContent = "Randomize";
+      randomizeLabel.textContent = "Selection";
 
       const randomizeSelect = document.createElement("select");
       randomizeSelect.className = "gpm-gallery-btn";
       randomizeSelect.style.padding = "4px 6px";
-      for (const mode of RANDOMIZE_OPTIONS) {
+      for (const mode of SELECTION_OPTIONS) {
         const option = document.createElement("option");
         option.value = mode;
-        option.textContent = mode;
+        option.textContent = mode.charAt(0) + mode.slice(1).toLowerCase();
         randomizeSelect.appendChild(option);
       }
 
@@ -752,7 +768,7 @@ app.registerExtension({
           const tile = document.createElement("div");
           tile.className = "gpm-gallery-tile";
           if (item.type === "image" && item.rel_path === state.selectedImageRel) {
-            tile.classList.add("selected");
+            tile.classList.add(state.randomizeMode === SELECTION_MANUAL ? "selected" : "active");
           }
 
           if (item.type === "folder") {
@@ -934,7 +950,7 @@ app.registerExtension({
       });
 
       randomizeSelect.addEventListener("change", async () => {
-        state.randomizeMode = RANDOMIZE_OPTIONS.includes(randomizeSelect.value) ? randomizeSelect.value : RANDOMIZE_OFF;
+        state.randomizeMode = SELECTION_OPTIONS.includes(randomizeSelect.value) ? randomizeSelect.value : SELECTION_MANUAL;
         setWidgets();
         await persistState();
         renderGrid();

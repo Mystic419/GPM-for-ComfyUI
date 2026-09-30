@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 from dataclasses import dataclass
 
 INTERNAL_SUPPORT_MODULE = "gpm_vlm_internal_multimodal"
@@ -129,7 +130,12 @@ def _probe_status_text(probe: ImportProbeResult) -> str:
 
 def print_startup_diagnostics() -> None:
     status = collect_dependency_status()
+    package_dir = Path(__file__).resolve().parent
+    web_dir = package_dir / "web"
+    prompt_saver_js = web_dir / "gpm_vlm_prompt_saver.js"
     print("[GPM startup] Dependency diagnostics")
+    print(f"[GPM startup] Web extension dir: {web_dir}")
+    print(f"[GPM startup] Prompt saver JS: {'OK' if prompt_saver_js.is_file() else 'MISSING'}")
     print(f"[GPM startup] Pillow import: {_probe_status_text(status.pillow)}")
     print(f"[GPM startup] llama_cpp import: {_probe_status_text(status.llama_cpp)}")
     print(f"[GPM startup] llama-cpp-python version: {status.llama_cpp_version or '<unknown>'}")

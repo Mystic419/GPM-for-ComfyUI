@@ -12,6 +12,7 @@ from typing import Any
 if __package__:
     from .gpm_vlm_backend import BACKEND_GGUF, scan_images_with_preset
     from .gpm_vlm_presets import GPMVLMPresetStore, get_preset_generation_settings
+    from .gpm_vlm_prompt_preset_adapter import get_vlm_prompt_preset
     from .gpm_vlm_runtime_base import RUNTIME_MODE_INTERNAL
 else:
     _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -37,11 +38,13 @@ else:
 
     _backend_mod = _load_worker_module("gpm_vlm_backend")
     _presets_mod = _load_worker_module("gpm_vlm_presets")
+    _prompt_adapter_mod = _load_worker_module("gpm_vlm_prompt_preset_adapter")
     _runtime_base_mod = _load_worker_module("gpm_vlm_runtime_base")
     BACKEND_GGUF = _backend_mod.BACKEND_GGUF
     scan_images_with_preset = _backend_mod.scan_images_with_preset
     GPMVLMPresetStore = _presets_mod.GPMVLMPresetStore
     get_preset_generation_settings = _presets_mod.get_preset_generation_settings
+    get_vlm_prompt_preset = _prompt_adapter_mod.get_vlm_prompt_preset
     RUNTIME_MODE_INTERNAL = _runtime_base_mod.RUNTIME_MODE_INTERNAL
 
 
@@ -61,8 +64,10 @@ def _empty_scan_error(preset_id: str, message: str) -> dict[str, Any]:
 def _run_worker_scan(request: dict[str, Any]) -> dict[str, Any]:
     preset_id = str(request.get("preset_id", "")).strip()
     try:
-        store = GPMVLMPresetStore()
-        preset = store.get_preset(preset_id)
+        preset_raw = request.get("preset")
+        preset = dict(preset_raw) if isinstance(preset_raw, dict) else None
+        if preset is None:
+            preset, _warning = get_vlm_prompt_preset(preset_id, fallback_family="sdxl")
         if preset is None:
             return _empty_scan_error(preset_id, f"preset not found: {preset_id}")
         model_name = str(request.get("model_name", "")).strip()

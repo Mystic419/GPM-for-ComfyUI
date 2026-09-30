@@ -11,6 +11,7 @@ Current implemented scope includes:
 - `GPM Prompt Combiner`
 - first `GPM VLM Scanner` implementation with GGUF-only backend mode
 - `GPM VLM Internal Diagnostics` helper node for internal runtime environment checks
+- `GPM VLM Prompt Loader` + `GPM VLM Prompt Saver` utility nodes for explicit preset load/save workflows
 
 ## Major components
 
@@ -40,6 +41,7 @@ Implemented files:
 - `gpm_vlm_internal_diagnostics_node.py`
 - `gpm_vlm_backend.py`
 - `gpm_vlm_presets.py`
+- `gpm_vlm_prompt_presets.py` (backend-only prompt preset manager for built-ins + user-editable presets)
 - `gpm_vlm_runtime_base.py`
 - `gpm_vlm_runtime_api.py`
 - `gpm_vlm_runtime_internal.py`
@@ -55,6 +57,7 @@ Owns:
 - applying empty-string defaults for missing/invalid prompt fields
 - preserving unrelated JSON fields on updates to selected family slots
 - keeping global preset recipes in `gpm_vlm_presets.json` (not duplicated per image)
+- keeping backend-editor-ready user prompt preset data in ComfyUI user data (`user/default/GPM/vlm_prompt_presets.json`) when available
 
 Implemented files:
 - `src/gallery_prompt_manager/core/gallery_browser_core.py`
@@ -97,6 +100,27 @@ Owns (not implemented yet):
 Implemented files:
 - `src/gallery_prompt_manager/nodes/prompt_combiner_node.py`
 - `src/gallery_prompt_manager/core/prompt_combiner_core.py`
+
+### 5. VLM prompt preset load/save layer
+Status: implemented as utility/config nodes.
+
+Owns (implemented now):
+- loading selected built-in or user prompt presets by stable preset id
+- emitting one normalized `GPM_VLM_PROMPT_PRESET` bundle from Loader
+- loading source bundle into Saver node-local state (explicit `LOAD FROM SOURCE` action)
+- saving new user presets from Saver edited fields
+- updating existing user presets by explicit source preset id
+- deleting user presets with built-in protection
+- normalizing multiline ban-list text input into `list[str]`
+- normalizing older family/metadata shape at read-time for node UX safety
+
+Owns (not implemented yet):
+- dynamic dropdown refresh without rerun
+
+Implemented files:
+- `gpm_vlm_prompt_loader_node.py`
+- `gpm_vlm_prompt_saver_node.py`
+- `gpm_vlm_prompt_presets.py`
 
 ## Current node contract
 
@@ -144,6 +168,44 @@ Outputs:
 Notes:
 - diagnostics-only node; does not load models
 - reuses model/mmproj discovery and family inference logic from internal runtime helpers
+
+### `GPM VLM Prompt Loader`
+Inputs:
+- `selected_preset` (preset id)
+
+Outputs:
+- `preset_bundle` (`GPM_VLM_PROMPT_PRESET`)
+- `status_text` (STRING)
+- `preset_json` (STRING)
+
+Notes:
+- loader is read-only and does not save/mutate preset storage
+- loader output is designed for explicit wiring into Saver `source_preset`
+
+### `GPM VLM Prompt Saver`
+Inputs:
+- `action` (`LOAD FROM SOURCE` | `SAVE AS NEW USER PRESET` | `UPDATE EXISTING USER PRESET` | `DELETE USER PRESET`)
+- `load_preset` (selected by the node-local Load button; no graph execution required)
+- `source_preset` (`GPM_VLM_PROMPT_PRESET`; connect from Loader `preset_bundle` output)
+- `preset_name` (STRING)
+- `system_prompt` (STRING, multiline)
+- `use_ban_list` (`KEEP` | `OFF` | `ON`)
+- `ban_list` (STRING, multiline; one term per line)
+
+Outputs:
+- `status_text` (STRING)
+- `saved_preset_id` (STRING)
+- `preset_json` (STRING)
+
+Notes:
+- Saver is stateful and uses node-local loaded-source metadata keyed by Comfy `UNIQUE_ID`
+- `LOAD FROM SOURCE` stores source metadata only; it does not save presets
+- `SAVE/UPDATE/DELETE` actions intentionally ignore live `source_preset` input to avoid overwriting edited fields
+- built-ins are valid source templates for `Save As New User Preset`
+- built-ins are blocked for update/delete actions
+- Saver preserves loaded source family on update
+- The node-local Load button requests a selected preset through a GPM HTTP endpoint, writes only the Saver's existing source state, and then populates editable widgets. It is intentionally a read-only preset operation and avoids the fragile execute-result path.
+- saver does not write image sidecar JSON and does not alter scanner runtime behavior
 
 ### Internal scanner debug mode
 Notes:

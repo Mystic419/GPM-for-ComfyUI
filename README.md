@@ -12,7 +12,10 @@ Implemented now:
 - `GPM VLM Scanner (Internal)` v2 (subprocess-isolated internal runtime with ComfyUI model-folder dropdown UX)
 - `GPM VLM Scanner (Internal Advanced)` v1 (same subprocess-isolated runtime with manual tuning controls)
 - `GPM VLM Internal Diagnostics` v1 (environment/status helper for internal GGUF multimodal support)
+- `GPM VLM Prompt Loader` v2 (selects source preset and emits normalized `preset_bundle`)
+- `GPM VLM Prompt Saver` v2 (stateful editable preset node with explicit load/save/update/delete modes)
 - Global VLM preset storage with built-in read-only defaults (`SDXL`, `Pony`, `Natural Language`)
+- Internal scanner preset resolution wired to backend preset manager (`gpm_vlm_prompt_presets.py`) with safe built-in fallback
 
 Not implemented yet:
 - clickable thumbnail frontend
@@ -53,7 +56,7 @@ Behavior on missing/invalid JSON:
 - `scene_prompt` output returns `""` when `sdxl_scene` is missing/invalid
 
 Persistence behavior:
-- each `GPM Gallery Browser` node instance persists its own `root_folder`, `current_subfolder`, `selected_image_rel`, and `visible_rows` using the ComfyUI node id
+- each `GPM Gallery Browser` node instance persists its own `root_folder`, `current_subfolder`, `selected_image_rel`, `visible_rows`, and selection mode using the ComfyUI node id
 
 ### `GPM Prompt Combiner`
 Purpose:
@@ -113,6 +116,12 @@ Purpose:
 - optional `debug_mode=ON` emits concise startup compatibility diagnostics in `summary_json` when internal startup fails
 - worker exits after each scan, which is the primary VRAM release mechanism
 - `keep_model_loaded` is internal-only and always ON during a scan run (not a user-facing widget)
+- preset control:
+  - `prompt_preset` (defaults to `builtin-sdxl`)
+  - options include SDXL, Pony, Natural Language, and user presets from backend preset manager
+  - selected preset system prompt is used for scan requests
+- scanner dropdowns show preset names; saved workflow IDs remain accepted for backward compatibility
+  - invalid/missing preset ids safely fall back to `builtin-sdxl`
 
 ### `GPM VLM Scanner (Internal Advanced)`
 Purpose:
@@ -120,6 +129,12 @@ Purpose:
 - exposes advanced runtime controls (`n_ctx`, `n_gpu_layers`, `temperature`, `top_p`, `max_tokens`, `threads`, `batch_size`)
 - keeps the same no-executable-path UX as the basic internal node
 - includes optional `debug_mode` toggle with the same startup diagnostics behavior as the basic internal node
+- family preset controls:
+  - `sdxl_preset` (default `builtin-sdxl`)
+  - `pony_preset` (default `builtin-pony`)
+  - `natural_preset` (default `builtin-natural-language`)
+  - family toggles: `scan_sdxl`, `scan_pony`, `scan_natural`
+  - each enabled family runs with its selected preset
 
 Internal runtime note:
 - For internal GGUF scanning, `keep_model_loaded` is always ON internally during the scan run.
@@ -135,6 +150,41 @@ Purpose:
 - report whether inferred family appears supported by the installed build
 - diagnostics only (does not load model)
 
+### `GPM VLM Prompt Loader`
+Purpose:
+- load one preset by stable preset id (built-in or user)
+- output one normalized preset bundle for Saver
+- never save/mutate/delete presets
+
+Outputs:
+- `preset_bundle` (`GPM_VLM_PROMPT_PRESET`)
+- `status_text`
+- `preset_json`
+
+### `GPM VLM Prompt Saver`
+Purpose:
+- apply explicit user actions for preset management
+- save new user presets from a source preset template
+- update existing user presets
+- delete existing user presets
+
+Actions:
+- `LOAD FROM SOURCE`
+- `Save As New User Preset`
+- `Update Existing User Preset`
+- `Delete User Preset`
+
+Notes:
+- built-ins can be loaded and used as source templates
+- built-ins cannot be updated or deleted
+- `source_preset` is a `GPM_VLM_PROMPT_PRESET` input (connect Loader `preset_bundle` with one noodle)
+- `ban_list` input is one term per line; blank lines are ignored
+- Saver updates preset storage only; scanner sidecar JSON fields are unchanged
+- `LOAD FROM SOURCE` stores source metadata in node-local saver state for later actions
+- `SAVE/UPDATE/DELETE` actions intentionally do not reload from connected Loader source to avoid overwriting edits
+- `load_preset` plus **Load selected preset into fields** is a node-local proof-of-concept path: it fetches the selected preset without queueing the graph, records the same source state as `LOAD FROM SOURCE`, and fills the editable fields
+- the button only reads presets and records the selected source; it never writes, updates, or deletes a preset
+
 Internal model locations:
 - `ComfyUI/models/llm/`
 - `ComfyUI/models/llm/GGUF/`
@@ -147,14 +197,47 @@ Discovery behavior:
 - main VLM models: `*.gguf` files excluding names containing `mmproj`
 - mmproj files: `*.gguf` filenames containing `mmproj`
 
-Global preset storage:
-- file: `gpm_vlm_presets.json` in the node package directory
-- auto-created if missing
-- built-ins are read-only defaults
-- user presets are supported as global recipes and are not duplicated into image sidecars
-- built-in ids: `builtin-sdxl`, `builtin-pony`, `builtin-natural-language`
-- managed user preset ids: `sdxl_user`, `pony_user`, `natural_user` (auto-created from matching built-ins if missing)
-- preset schema includes `system_prompt`, `ban_list`, `temperature`, `top_p`, `max_tokens`
+Backend preset-manager (active for internal scanner preset lookup):
+- module: `gpm_vlm_prompt_presets.py`
+- built-in presets remain read-only
+- user-editable preset file path prefers `ComfyUI/user/default/GPM/vlm_prompt_presets.json` when ComfyUI `folder_paths.user_directory` is available
+- fallback path outside ComfyUI runtime: `gpm_vlm_prompt_presets.user.json` beside the module
+- scanner adapter: `gpm_vlm_prompt_preset_adapter.py`
+  - list preset options for UI dropdowns
+  - resolve preset id with family-default fallback
+  - append ban-list guidance to system prompt only when `use_ban_list=true` and list is non-empty
+
+Prompt preset workflow (Loader -> Saver):
+1. Add `GPM VLM Prompt Loader`.
+2. Select a preset id.
+3. Connect Loader `preset_bundle` to Saver `source_preset`.
+4. In Saver set action to `LOAD FROM SOURCE`, then run once.
+5. Edit Saver fields (`preset_name`, `system_prompt`, `use_ban_list`, `ban_list`).
+6. Switch Saver action to `SAVE AS NEW USER PRESET`, `UPDATE EXISTING USER PRESET`, or `DELETE USER PRESET`, then run.
+7. During save/update/delete, Saver uses edited fields + loaded source state and does not reload from Loader input.
+8. Refresh/restart ComfyUI if preset dropdowns do not immediately show new user presets.
+
+Node-local load-button proof of concept:
+1. Add `GPM VLM Prompt Saver` (a Loader connection is not needed for this check).
+2. Choose a preset in `load_preset`.
+3. Press **Load selected preset into fields**.
+4. Confirm `preset_name`, `system_prompt`, `use_ban_list`, and `ban_list` fill immediately.
+5. Edit the fields, choose a save action, and run the Saver node. The button has already recorded the same server-side source state that the legacy `LOAD FROM SOURCE` action records.
+
+Manual Saver UX check:
+1. Add Loader and Saver.
+2. Connect Loader `preset_bundle` to Saver `source_preset`.
+3. Select `builtin-sdxl` in Loader.
+4. Set Saver action `LOAD FROM SOURCE` and run.
+5. Confirm Saver fields visibly fill (`preset_name`, `system_prompt`, `use_ban_list`, `ban_list`).
+6. Edit `preset_name` and `system_prompt`.
+7. Set Saver action `SAVE AS NEW USER PRESET` and run.
+8. Confirm saved preset contains edited values.
+9. Change Loader selected preset and run Saver save again without running `LOAD FROM SOURCE`.
+10. Confirm Saver save does not overwrite edits from the changed Loader input.
+
+Scanner usage note:
+- scanner nodes continue consuming saved presets by preset id dropdown through the existing preset adapter/backend flow.
 
 ## Prototype operation model (v1)
 `GPM Gallery Browser` uses node controls for navigation:
@@ -202,7 +285,8 @@ Then:
 
 Browser UI includes:
 - prompt profile selector: `SDXL`, `Pony`, `Natural Language` (SDXL implemented end-to-end now)
-- randomize selector: `OFF`, `ON`
+- selection selector: `Manual`, `Sequential`, `Random`
+- Sequential advances through the visible images in folder order on each queued execution. Random uses each visible image once before beginning a new shuffled cycle.
 - `Save to JSON` button for writing active profile prompt edits to the selected image sibling JSON
 
 One-time JSON migration helper:

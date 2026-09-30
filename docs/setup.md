@@ -155,7 +155,7 @@ $env:GPM_LLAMA_INSTALL_MODE='cuda-build'; python .\install.py
 11. Read node UI feedback (`status`, `current_subfolder`, `entries`) and outputs.
 12. Add `GPM Prompt Combiner` and connect browser `person_prompt` and `scene_prompt` outputs.
 13. Optionally set `lora_tags`; use `combined_prompt` as your final positive prompt string.
-14. In browser UI, choose prompt profile (`SDXL`, `Pony`, `Natural Language`) and optional randomize mode (`OFF`, `ON`).
+14. In browser UI, choose prompt profile (`SDXL`, `Pony`, `Natural Language`) and selection mode (`Manual`, `Sequential`, `Random`).
 
 Lifecycle UI compatibility note:
 - If a workflow was saved before internal lifecycle widgets were removed/changed, re-add fresh `GPM VLM Scanner (Internal)` / `GPM VLM Scanner (Internal Advanced)` nodes after upgrading.
@@ -190,12 +190,14 @@ pytest
 
 ## Notes
 - VLM presets are stored globally in `gpm_vlm_presets.json` beside the node files and auto-created with read-only built-ins (`SDXL`, `Pony`, `Natural Language`) if missing.
+- Backend prompt-presets manager for upcoming editor integration is implemented in `gpm_vlm_prompt_presets.py` and stores user presets under `ComfyUI/user/default/GPM/vlm_prompt_presets.json` when ComfyUI user paths are available (safe fallback path is used outside ComfyUI runtime).
 - Internal scanner correctness is currently validated for `Qwen2.5-VL` only (with a vision-capable `llama-cpp-python` build).
+- `timeout_seconds` is a whole-worker scan limit, not a per-image limit. Unlimited folder scans receive a 30-minute minimum; completed sidecars are retained if a later run is needed.
 - Other internal multimodal families may still load, but are blocked from scan execution until validated for correctness in GPM.
 - Scanner prompt tuning/model-family prompt refinement is separate future work; install flow only manages dependency readiness.
 - Browser prompt text areas are editable; edits affect node output for the current workflow run.
 - Use `Save to JSON` to persist current active-profile prompt text to the selected image sibling JSON (`*.json`).
-- In `ON`, the browser re-randomizes on each execution cycle (including queued runs) using visible images in the current folder only.
+- In `Sequential`, the browser advances through visible images in current-folder order on each execution cycle (including queued runs). In `Random`, it uses every visible image once in a shuffled cycle before any image repeats. The active automated image is highlighted in green.
 - Clickable gallery tiles are implemented for selection and JSON prompt loading on image click.
 - Combiner v1 intentionally keeps formatting simple: person -> scene -> lora with blank filtering and comma/whitespace cleanup.
 
