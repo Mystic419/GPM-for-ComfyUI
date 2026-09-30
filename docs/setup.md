@@ -193,7 +193,7 @@ pytest
 - Backend prompt-presets manager for upcoming editor integration is implemented in `gpm_vlm_prompt_presets.py` and stores user presets under `ComfyUI/user/default/GPM/vlm_prompt_presets.json` when ComfyUI user paths are available (safe fallback path is used outside ComfyUI runtime).
 - Internal scanner correctness is currently validated for `Qwen2.5-VL` only (with a vision-capable `llama-cpp-python` build).
 - `timeout_seconds` is a whole-worker scan limit, not a per-image limit. Unlimited folder scans receive a 30-minute minimum; completed sidecars are retained if a later run is needed.
-- Internal folder scans run in checkpointed batches of 50 newly eligible images. `SKIP_EXISTING` reruns advance past completed sidecars automatically, including after a restart or interrupted batch.
+- Internal folder scans keep the VLM loaded in one worker for the full requested scan. If an image stalls hard enough to time out the worker, GPM defers that one image for the rest of the run and continues; it remains eligible for a later `SKIP_EXISTING` rescan.
 - Other internal multimodal families may still load, but are blocked from scan execution until validated for correctness in GPM.
 - Scanner prompt tuning/model-family prompt refinement is separate future work; install flow only manages dependency readiness.
 - Browser prompt text areas are editable; edits affect node output for the current workflow run.

@@ -54,7 +54,7 @@ All notable user-visible changes should be recorded here.
   - multiline ban-list text is normalized to `list[str]` while preserving terms even when `use_ban_list=OFF`
 - Scanner preset dropdowns now show readable preset names instead of internal `user-…` IDs while continuing to resolve the stable IDs internally.
 - Internal scanner worker timeout is now batch-aware: unlimited scans receive a 30-minute minimum and finite scan limits scale the worker allowance with the requested image count.
-- Internal scanner now runs large folders as checkpointed 50-image subprocess batches; `scan_limit` counts newly eligible images so reruns no longer get stuck revisiting completed sidecars.
+- Internal scanner keeps its VLM loaded for a full requested scan. After a hard worker timeout, it defers the stalled image for that run and continues with the remaining eligible images; the deferred image remains available to `SKIP_EXISTING` rescans.
 - New scanner backend helper module `gpm_vlm_backend.py` for family-slot mapping, skip/overwrite logic, robust scan summaries, and sidecar JSON updates that preserve unrelated fields.
 - Runtime abstraction groundwork for scanner backends with shared orchestration:
   - `gpm_vlm_runtime_base.py`

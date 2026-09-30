@@ -37,8 +37,10 @@ from .gpm_vlm_prompt_preset_adapter import (
 )
 
 EXECUTION_MODE_SUBPROCESS = "SUBPROCESS (Recommended: releases VRAM after scan)"
-DEFAULT_BATCH_WORKER_TIMEOUT_SECONDS = 1800
-INTERNAL_WORKER_IMAGE_BATCH_SIZE = 50
+# One worker keeps the VLM loaded for the full scan.  Timeout recovery starts
+# another worker only when a particular image stalls.
+DEFAULT_BATCH_WORKER_TIMEOUT_SECONDS = 3600
+INTERNAL_WORKER_IMAGE_BATCH_SIZE = 0
 
 
 _INTERNAL_STARTUP_ERROR_PREFIXES = (
@@ -301,9 +303,9 @@ def _run_internal_scan_subprocess(
         scan_limit = max(0, int(request.get("scan_limit", 0)))
     except (TypeError, ValueError):
         scan_limit = 0
-    # The subprocess processes the entire folder, not one image.  Give an
-    # unlimited scan a practical batch-level guardrail, while limited scans
-    # scale their allowance with the number of requested images.
+    # The subprocess normally processes the entire requested scan with one
+    # model load.  Give an unlimited scan a practical whole-scan guardrail,
+    # while limited scans scale their allowance with the requested count.
     worker_timeout_seconds = max(
         requested_timeout_seconds,
         DEFAULT_BATCH_WORKER_TIMEOUT_SECONDS if scan_limit == 0 else max(60, scan_limit * 10),
@@ -408,7 +410,7 @@ def _normalize_execution_mode(execution_mode: str) -> str:
 
 
 def _combine_worker_batch_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
-    """Present several checkpointed worker runs as one scanner result."""
+    """Present a normal or timeout-recovery worker run as one scanner result."""
     if not summaries:
         return _empty_scan_error("", "internal scan did not produce a worker summary")
     if len(summaries) == 1:
@@ -526,11 +528,9 @@ def _run_internal_scan(
         deferred_timeout_candidates = 0
         while True:
             batch_request = dict(request)
-            batch_request["scan_limit"] = (
-                min(INTERNAL_WORKER_IMAGE_BATCH_SIZE, remaining)
-                if remaining > 0
-                else INTERNAL_WORKER_IMAGE_BATCH_SIZE
-            )
+            # Keep the model loaded for the normal whole scan.  A finite user
+            # limit is still honored as one worker request.
+            batch_request["scan_limit"] = remaining if remaining > 0 else 0
             batch_request["skip_first_eligible"] = deferred_timeout_candidates
             batch_summary = subprocess_runner(request=batch_request, timeout_seconds=timeout_seconds)
             if not isinstance(batch_summary, dict):

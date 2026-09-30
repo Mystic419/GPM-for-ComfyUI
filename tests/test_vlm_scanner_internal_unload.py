@@ -394,7 +394,7 @@ def test_subprocess_path_handles_missing_output_json():
     assert summary["worker_return_code"] == 0
 
 
-def test_unlimited_subprocess_scan_runs_in_checkpointed_worker_batches():
+def test_unlimited_subprocess_scan_uses_one_worker_and_one_model_load():
     scanner_mod = _load_module("gpm_vlm_scanner_internal_node")
     captured_limits = []
     scanner_mod.resolve_model_and_mmproj_paths = lambda **_kwargs: (
@@ -405,7 +405,6 @@ def test_unlimited_subprocess_scan_runs_in_checkpointed_worker_batches():
 
     def _fake_worker(*, request, timeout_seconds):
         captured_limits.append(request["scan_limit"])
-        is_first_batch = len(captured_limits) == 1
         return {
             "ok": True,
             "total_found": 100,
@@ -414,8 +413,8 @@ def test_unlimited_subprocess_scan_runs_in_checkpointed_worker_batches():
             "skipped": 0,
             "failures": [],
             "warnings": [],
-            "batch_candidates_started": 50,
-            "batch_has_more": is_first_batch,
+            "batch_candidates_started": 100,
+            "batch_has_more": False,
             "worker_elapsed_seconds": 1.0,
         }
 
@@ -444,9 +443,8 @@ def test_unlimited_subprocess_scan_runs_in_checkpointed_worker_batches():
         execution_mode="SUBPROCESS",
     )
     summary = json.loads(summary_json)
-    assert captured_limits == [50, 50]
-    assert summary["batch_count"] == 2
-    assert summary["processed"] == 100
+    assert captured_limits == [0]
+    assert summary["processed"] == 50
 
 
 def test_subprocess_scan_defers_stalled_candidate_and_continues_remaining_images():
