@@ -394,6 +394,61 @@ def test_subprocess_path_handles_missing_output_json():
     assert summary["worker_return_code"] == 0
 
 
+def test_unlimited_subprocess_scan_runs_in_checkpointed_worker_batches():
+    scanner_mod = _load_module("gpm_vlm_scanner_internal_node")
+    captured_limits = []
+    scanner_mod.resolve_model_and_mmproj_paths = lambda **_kwargs: (
+        Path("D:/ComfyUI/models/LLM/gguf/model.gguf"),
+        Path("D:/ComfyUI/models/LLM/gguf/mmproj.gguf"),
+        "",
+    )
+
+    def _fake_worker(*, request, timeout_seconds):
+        captured_limits.append(request["scan_limit"])
+        is_first_batch = len(captured_limits) == 1
+        return {
+            "ok": True,
+            "total_found": 100,
+            "processed": 50,
+            "failed": 0,
+            "skipped": 0,
+            "failures": [],
+            "warnings": [],
+            "batch_candidates_started": 50,
+            "batch_has_more": is_first_batch,
+            "worker_elapsed_seconds": 1.0,
+        }
+
+    scanner_mod._run_internal_scan_subprocess = _fake_worker
+    summary_json, _ = scanner_mod._run_internal_scan(
+        root_folder=".",
+        preset_id="builtin-sdxl",
+        overwrite_mode="SKIP_EXISTING",
+        scan_limit=0,
+        write_scan_report="OFF",
+        preset_payload={"id": "builtin-sdxl", "family": "SDXL"},
+        model_name="model.gguf",
+        mmproj_name="mmproj.gguf",
+        timeout_seconds=180,
+        n_ctx=4096,
+        n_gpu_layers=-1,
+        temperature=0.2,
+        top_p=0.95,
+        max_tokens=512,
+        threads=0,
+        batch_size=512,
+        keep_model_loaded=True,
+        unload_on_complete=True,
+        debug_mode=False,
+        node_runtime_lifecycle_mode="test_mode",
+        execution_mode="SUBPROCESS",
+    )
+    summary = json.loads(summary_json)
+    assert captured_limits == [50, 50]
+    assert summary["batch_count"] == 2
+    assert summary["processed"] == 100
+
+
 def test_backend_forces_release_when_internal_unload_on_complete_true():
     backend_mod = _load_module("gpm_vlm_backend")
 

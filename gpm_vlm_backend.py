@@ -385,8 +385,10 @@ def scan_images_with_preset(
         return _empty_summary("invalid root folder")
 
     images = _discover_images(root)
-    if scan_limit > 0:
-        images = images[: int(scan_limit)]
+    try:
+        batch_limit = max(0, int(scan_limit))
+    except (TypeError, ValueError):
+        batch_limit = 0
 
     runtime_builder = _build_runtime
     runtime, runtime_error = runtime_builder(
@@ -509,6 +511,8 @@ def scan_images_with_preset(
     failed = 0
     warnings: list[dict[str, str]] = []
     runtime_cleanup_info: dict[str, Any] | None = None
+    batch_candidates_started = 0
+    batch_has_more = False
 
     try:
         for image_path in images:
@@ -532,6 +536,9 @@ def scan_images_with_preset(
                     "skipped_files": skipped_files,
                     "failures": failures,
                     "warnings": warnings,
+                    "batch_limit": batch_limit,
+                    "batch_candidates_started": batch_candidates_started,
+                    "batch_has_more": False,
                     "stopped": True,
                     "stopped_reason": "execution interrupted",
                 }
@@ -552,6 +559,13 @@ def scan_images_with_preset(
                 skipped += 1
                 skipped_files.append(_scan_skipped_record(image_path, "family slot already populated"))
                 continue
+
+            # Limit newly eligible images, not the first N files in the
+            # folder.  This makes reruns advance past completed sidecars.
+            if batch_limit and batch_candidates_started >= batch_limit:
+                batch_has_more = True
+                break
+            batch_candidates_started += 1
 
             # Explicitly scope and reset per-image request state.
             runtime_trace: dict[str, Any] = {}
@@ -677,6 +691,9 @@ def scan_images_with_preset(
         "skipped_files": skipped_files,
         "failures": failures,
         "warnings": warnings,
+        "batch_limit": batch_limit,
+        "batch_candidates_started": batch_candidates_started,
+        "batch_has_more": batch_has_more,
     }
     if runtime_summary_metadata:
         summary.update(runtime_summary_metadata)

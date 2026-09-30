@@ -38,6 +38,7 @@ from .gpm_vlm_prompt_preset_adapter import (
 
 EXECUTION_MODE_SUBPROCESS = "SUBPROCESS (Recommended: releases VRAM after scan)"
 DEFAULT_BATCH_WORKER_TIMEOUT_SECONDS = 1800
+INTERNAL_WORKER_IMAGE_BATCH_SIZE = 50
 
 
 _INTERNAL_STARTUP_ERROR_PREFIXES = (
@@ -406,6 +407,39 @@ def _normalize_execution_mode(execution_mode: str) -> str:
     return "subprocess"
 
 
+def _combine_worker_batch_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Present several checkpointed worker runs as one scanner result."""
+    if not summaries:
+        return _empty_scan_error("", "internal scan did not produce a worker summary")
+    if len(summaries) == 1:
+        return summaries[0]
+
+    combined = dict(summaries[-1])
+    combined["batch_count"] = len(summaries)
+    combined["worker_batch_size"] = INTERNAL_WORKER_IMAGE_BATCH_SIZE
+    combined["processed"] = sum(int(item.get("processed", 0) or 0) for item in summaries)
+    combined["failed"] = sum(int(item.get("failed", 0) or 0) for item in summaries)
+    combined["total_found"] = max(int(item.get("total_found", 0) or 0) for item in summaries)
+    combined["skipped"] = max(0, combined["total_found"] - combined["processed"] - combined["failed"])
+    combined["worker_elapsed_seconds"] = round(
+        sum(float(item.get("worker_elapsed_seconds", 0) or 0) for item in summaries), 3
+    )
+    combined["batch_has_more"] = bool(summaries[-1].get("batch_has_more", False))
+    combined["failures"] = [
+        failure
+        for item in summaries
+        for failure in item.get("failures", [])
+        if isinstance(failure, dict)
+    ]
+    combined["warnings"] = [
+        warning
+        for item in summaries
+        for warning in item.get("warnings", [])
+        if isinstance(warning, dict)
+    ]
+    return combined
+
+
 def _run_internal_scan(
     *,
     root_folder: str,
@@ -487,7 +521,31 @@ def _run_internal_scan(
     )
     if normalized_execution_mode == "subprocess":
         subprocess_runner = _run_internal_scan_subprocess
-        summary = subprocess_runner(request=request, timeout_seconds=timeout_seconds)
+        remaining = max(0, int(scan_limit))
+        worker_summaries: list[dict[str, Any]] = []
+        while True:
+            batch_request = dict(request)
+            batch_request["scan_limit"] = (
+                min(INTERNAL_WORKER_IMAGE_BATCH_SIZE, remaining)
+                if remaining > 0
+                else INTERNAL_WORKER_IMAGE_BATCH_SIZE
+            )
+            batch_summary = subprocess_runner(request=batch_request, timeout_seconds=timeout_seconds)
+            if not isinstance(batch_summary, dict):
+                batch_summary = _empty_scan_error(preset_id, "internal scan returned invalid worker summary payload")
+            worker_summaries.append(batch_summary)
+
+            candidates_started = max(0, int(batch_summary.get("batch_candidates_started", 0) or 0))
+            if remaining > 0:
+                remaining = max(0, remaining - candidates_started)
+            if (
+                not bool(batch_summary.get("ok", False))
+                or not bool(batch_summary.get("batch_has_more", False))
+                or (scan_limit > 0 and remaining == 0)
+                or candidates_started == 0
+            ):
+                break
+        summary = _combine_worker_batch_summaries(worker_summaries)
         _restore_subprocess_runner()
     else:
         summary = _run_internal_scan_in_process(
