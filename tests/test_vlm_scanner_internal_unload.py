@@ -449,6 +449,49 @@ def test_unlimited_subprocess_scan_runs_in_checkpointed_worker_batches():
     assert summary["processed"] == 100
 
 
+def test_subprocess_scan_defers_stalled_candidate_and_continues_remaining_images():
+    scanner_mod = _load_module("gpm_vlm_scanner_internal_node")
+    requests = []
+
+    def _fake_worker(*, request, timeout_seconds):
+        requests.append(dict(request))
+        if len(requests) == 1:
+            return {"ok": False, "worker_timed_out": True}
+        return {
+            "ok": True,
+            "batch_candidates_started": 2,
+            "batch_has_more": False,
+            "processed": 2,
+            "failed": 0,
+            "skipped": 0,
+            "total_found": 3,
+            "warnings": [],
+            "failures": [],
+        }
+
+    original_runner = scanner_mod._run_internal_scan_subprocess
+    original_resolve = scanner_mod.resolve_model_and_mmproj_paths
+    scanner_mod._run_internal_scan_subprocess = _fake_worker
+    scanner_mod.resolve_model_and_mmproj_paths = lambda **_kwargs: (Path("model.gguf"), Path("mmproj.gguf"), "")
+    try:
+        summary_json, _ = scanner_mod._run_internal_scan(
+            root_folder=".", preset_id="builtin-sdxl", overwrite_mode="SKIP_EXISTING", scan_limit=0,
+            write_scan_report="OFF", preset_payload={"id": "builtin-sdxl", "family": "SDXL"},
+            model_name="model.gguf", mmproj_name="mmproj.gguf", timeout_seconds=180,
+            n_ctx=4096, n_gpu_layers=-1, temperature=0.2, top_p=0.95, max_tokens=512,
+            threads=0, batch_size=512, keep_model_loaded=True, unload_on_complete=True,
+            debug_mode=False, node_runtime_lifecycle_mode="test_mode", execution_mode="SUBPROCESS",
+        )
+    finally:
+        scanner_mod._run_internal_scan_subprocess = original_runner
+        scanner_mod.resolve_model_and_mmproj_paths = original_resolve
+
+    summary = json.loads(summary_json)
+    assert [request["skip_first_eligible"] for request in requests] == [0, 1]
+    assert summary["processed"] == 2
+    assert summary["deferred_timeout_candidates"] == 1
+
+
 def test_backend_forces_release_when_internal_unload_on_complete_true():
     backend_mod = _load_module("gpm_vlm_backend")
 

@@ -352,6 +352,7 @@ def scan_images_with_preset(
     internal_debug_mode: bool = False,
     internal_model_path_override: str = "",
     internal_mmproj_path_override: str = "",
+    skip_first_eligible: int = 0,
 ) -> dict[str, Any]:
     family = str(preset.get("family", "")).strip()
     if family not in FAMILY_TO_JSON_FIELDS:
@@ -395,6 +396,10 @@ def scan_images_with_preset(
         batch_limit = max(0, int(scan_limit))
     except (TypeError, ValueError):
         batch_limit = 0
+    try:
+        remaining_deferred_skips = max(0, int(skip_first_eligible))
+    except (TypeError, ValueError):
+        remaining_deferred_skips = 0
 
     runtime_builder = _build_runtime
     runtime, runtime_error = runtime_builder(
@@ -564,6 +569,15 @@ def scan_images_with_preset(
             ):
                 skipped += 1
                 skipped_files.append(_scan_skipped_record(image_path, "family slot already populated"))
+                continue
+
+            # A parent process can defer a candidate after a worker timeout.
+            # Do not create or modify a sidecar here: the image remains
+            # eligible for a later user-initiated rescan.
+            if remaining_deferred_skips > 0:
+                remaining_deferred_skips -= 1
+                skipped += 1
+                skipped_files.append(_scan_skipped_record(image_path, "deferred after worker timeout"))
                 continue
 
             # Limit newly eligible images, not the first N files in the

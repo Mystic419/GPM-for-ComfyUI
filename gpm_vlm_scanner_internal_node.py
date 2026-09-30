@@ -523,6 +523,7 @@ def _run_internal_scan(
         subprocess_runner = _run_internal_scan_subprocess
         remaining = max(0, int(scan_limit))
         worker_summaries: list[dict[str, Any]] = []
+        deferred_timeout_candidates = 0
         while True:
             batch_request = dict(request)
             batch_request["scan_limit"] = (
@@ -530,9 +531,19 @@ def _run_internal_scan(
                 if remaining > 0
                 else INTERNAL_WORKER_IMAGE_BATCH_SIZE
             )
+            batch_request["skip_first_eligible"] = deferred_timeout_candidates
             batch_summary = subprocess_runner(request=batch_request, timeout_seconds=timeout_seconds)
             if not isinstance(batch_summary, dict):
                 batch_summary = _empty_scan_error(preset_id, "internal scan returned invalid worker summary payload")
+
+            # A hard-killed worker cannot report which image it was processing.
+            # Completed images have sidecars and are skipped on the next worker;
+            # therefore the first remaining eligible image is the stalled one.
+            # Defer it only for this execution, then continue the folder.  It is
+            # intentionally left without a sidecar so a later rescan can retry it.
+            if bool(batch_summary.get("worker_timed_out", False)):
+                deferred_timeout_candidates += 1
+                continue
             worker_summaries.append(batch_summary)
 
             candidates_started = max(0, int(batch_summary.get("batch_candidates_started", 0) or 0))
@@ -546,6 +557,19 @@ def _run_internal_scan(
             ):
                 break
         summary = _combine_worker_batch_summaries(worker_summaries)
+        if deferred_timeout_candidates:
+            warnings = summary.get("warnings", [])
+            warnings = list(warnings) if isinstance(warnings, list) else []
+            warnings.append(
+                {
+                    "warning": (
+                        f"deferred {deferred_timeout_candidates} image(s) after worker timeout; "
+                        "they remain eligible for a later rescan"
+                    )
+                }
+            )
+            summary["warnings"] = warnings
+            summary["deferred_timeout_candidates"] = deferred_timeout_candidates
         _restore_subprocess_runner()
     else:
         summary = _run_internal_scan_in_process(

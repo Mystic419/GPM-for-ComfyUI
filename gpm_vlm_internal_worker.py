@@ -123,6 +123,7 @@ def _run_worker_scan(request: dict[str, Any]) -> dict[str, Any]:
             internal_keep_model_loaded=True,
             internal_unload_on_complete=True,
             internal_debug_mode=bool(request.get("debug_mode", False)),
+            skip_first_eligible=int(request.get("skip_first_eligible", 0)),
         )
     except Exception as exc:
         return _empty_scan_error(preset_id, f"internal scan execution failed: {exc}")
