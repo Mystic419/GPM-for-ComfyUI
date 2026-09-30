@@ -71,6 +71,13 @@ def _choice_key(path: Path, models_root: Path | None) -> str:
     return str(path.resolve())
 
 
+def _model_choice_sort_key(choice: str) -> tuple[int, str]:
+    """Prefer the currently verified Qwen2.5-VL scanner family by default."""
+    normalized = str(choice).casefold().replace("_", "-")
+    is_qwen25_vl = any(token in normalized for token in ("qwen2.5-vl", "qwen2-5-vl", "qwen25-vl"))
+    return (0 if is_qwen25_vl else 1, normalized)
+
+
 def _discover_gguf_files() -> GPMDiscoveredGGUF:
     models_root = _resolve_models_root()
 
@@ -88,7 +95,7 @@ def _discover_gguf_files() -> GPMDiscoveredGGUF:
             else:
                 model_by_choice.setdefault(choice, path)
 
-    model_choices = sorted(model_by_choice.keys(), key=str.casefold)
+    model_choices = sorted(model_by_choice.keys(), key=_model_choice_sort_key)
     mmproj_choices = [AUTO_MMPROJ_OPTION]
     mmproj_choices.extend(sorted(mmproj_by_choice.keys(), key=str.casefold))
 
