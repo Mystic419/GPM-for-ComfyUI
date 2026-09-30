@@ -102,6 +102,11 @@ def _default_payload() -> dict[str, Any]:
 
 
 def _resolve_user_presets_path() -> Path:
+    # An explicit override is useful for portable installs and makes test/local
+    # preset stores independent from whichever ComfyUI instance is on sys.path.
+    fallback_root = Path(os.getenv("GPM_USER_DATA_DIR", "")).expanduser() if os.getenv("GPM_USER_DATA_DIR") else None
+    if fallback_root:
+        return fallback_root.resolve() / "vlm_prompt_presets.json"
     try:
         import folder_paths  # type: ignore
 
@@ -110,9 +115,6 @@ def _resolve_user_presets_path() -> Path:
             return Path(str(user_dir)).expanduser().resolve() / "default" / "GPM" / "vlm_prompt_presets.json"
     except Exception:
         pass
-    fallback_root = Path(os.getenv("GPM_USER_DATA_DIR", "")).expanduser() if os.getenv("GPM_USER_DATA_DIR") else None
-    if fallback_root:
-        return fallback_root.resolve() / "vlm_prompt_presets.json"
     return Path(__file__).resolve().parent / "gpm_vlm_prompt_presets.user.json"
 
 

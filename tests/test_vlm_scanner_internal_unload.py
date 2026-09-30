@@ -35,8 +35,10 @@ def test_internal_nodes_hide_lifecycle_controls():
 
     assert "unload_on_complete" not in base_inputs
     assert "execution_mode" not in base_inputs
+    assert "keep_model_loaded" not in base_inputs
     assert "unload_on_complete" not in adv_inputs
     assert "execution_mode" not in adv_inputs
+    assert "keep_model_loaded" not in adv_inputs
 
 
 def test_basic_internal_scanner_offers_all_builtin_prompt_families_by_readable_name():
@@ -45,8 +47,6 @@ def test_basic_internal_scanner_offers_all_builtin_prompt_families_by_readable_n
     assert "SDXL" in prompt_choices
     assert "Pony" in prompt_choices
     assert "Natural Language" in prompt_choices
-    assert "keep_model_loaded" not in base_inputs
-    assert "keep_model_loaded" not in adv_inputs
 
 
 def test_advanced_node_hardcodes_subprocess_unload_and_keep_loaded():
