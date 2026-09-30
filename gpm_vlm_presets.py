@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .gpm_vlm_runtime_base import RECOMMENDED_GGUF_MODEL_REPO
+from .gpm_vlm_runtime_base import VALIDATED_INTERNAL_MODEL_FAMILY
 
 PRESETS_FILE_PATH = Path(__file__).with_name("gpm_vlm_presets.json")
 
@@ -67,7 +67,7 @@ def _default_builtin_presets() -> list[dict[str, Any]]:
             "temperature": GENERATION_TEMPERATURE_DEFAULT,
             "top_p": GENERATION_TOP_P_DEFAULT,
             "max_tokens": GENERATION_MAX_TOKENS_DEFAULT,
-            "validated_model_name": RECOMMENDED_GGUF_MODEL_REPO,
+            "validated_model_name": VALIDATED_INTERNAL_MODEL_FAMILY,
             "is_builtin": True,
             "created_at": now,
             "updated_at": now,
@@ -98,7 +98,7 @@ def _default_builtin_presets() -> list[dict[str, Any]]:
             "temperature": GENERATION_TEMPERATURE_DEFAULT,
             "top_p": GENERATION_TOP_P_DEFAULT,
             "max_tokens": GENERATION_MAX_TOKENS_DEFAULT,
-            "validated_model_name": RECOMMENDED_GGUF_MODEL_REPO,
+            "validated_model_name": VALIDATED_INTERNAL_MODEL_FAMILY,
             "is_builtin": True,
             "created_at": now,
             "updated_at": now,
@@ -127,7 +127,7 @@ def _default_builtin_presets() -> list[dict[str, Any]]:
             "temperature": GENERATION_TEMPERATURE_DEFAULT,
             "top_p": GENERATION_TOP_P_DEFAULT,
             "max_tokens": GENERATION_MAX_TOKENS_DEFAULT,
-            "validated_model_name": RECOMMENDED_GGUF_MODEL_REPO,
+            "validated_model_name": VALIDATED_INTERNAL_MODEL_FAMILY,
             "is_builtin": True,
             "created_at": now,
             "updated_at": now,

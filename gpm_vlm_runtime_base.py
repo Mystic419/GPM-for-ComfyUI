@@ -8,10 +8,9 @@ RUNTIME_MODE_API = "api"
 RUNTIME_MODE_INTERNAL = "internal"
 SUPPORTED_RUNTIME_MODES = {RUNTIME_MODE_API, RUNTIME_MODE_INTERNAL}
 
-# Presets are currently validated primarily against this GGUF family.
-# Alternate GGUF models are still allowed and not blocked.
-RECOMMENDED_GGUF_MODEL_REPO = "mradermacher/Gliese-Qwen3.5-9B-Abliterated-Caption-GGUF"
-
+# The internal scanner’s validated multimodal family. This is descriptive
+# metadata for built-in presets, not a recommendation to download one repo.
+VALIDATED_INTERNAL_MODEL_FAMILY = "Qwen2.5-VL"
 
 class GPMVLMRuntime(ABC):
     runtime_mode: str = RUNTIME_MODE_API

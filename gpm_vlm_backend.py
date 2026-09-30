@@ -10,7 +10,6 @@ from typing import Any
 from .gpm_vlm_model_discovery import resolve_model_and_mmproj_paths
 from .gpm_vlm_runtime_api import GPMGGUFAPIRuntime
 from .gpm_vlm_runtime_base import (
-    RECOMMENDED_GGUF_MODEL_REPO,
     RUNTIME_MODE_API,
     RUNTIME_MODE_INTERNAL,
     SUPPORTED_RUNTIME_MODES,
@@ -539,7 +538,6 @@ def scan_images_with_preset(
                     "backend": BACKEND_GGUF,
                     "runtime_mode": normalized_runtime_mode,
                     "model_name": effective_model_name,
-                    "recommended_model_repo": RECOMMENDED_GGUF_MODEL_REPO,
                     "total_found": len(images),
                     "processed": processed,
                     "skipped": skipped,
@@ -717,7 +715,6 @@ def scan_images_with_preset(
         "backend": BACKEND_GGUF,
         "runtime_mode": normalized_runtime_mode,
         "model_name": effective_model_name,
-        "recommended_model_repo": RECOMMENDED_GGUF_MODEL_REPO,
         "total_found": len(images),
         "processed": processed,
         "skipped": skipped,
