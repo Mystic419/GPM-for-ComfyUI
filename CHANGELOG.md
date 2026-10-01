@@ -4,6 +4,14 @@ All notable user-visible changes should be recorded here.
 
 ## Unreleased
 
+## 1.0.1 - 2026-09-30
+
+### Fixed
+- Restored Gallery Browser initialization on current ComfyUI frontend builds where workflow nodes can be created before the legacy node-definition hook runs.
+
+### Changed
+- Added an idempotent node-created fallback for the Gallery Browser frontend while retaining the legacy hook for older ComfyUI builds.
+
 ### Documentation
 - Added public-facing workflow examples and screenshots for scanning, gallery-browser generation, and prompt preset editing/saving.
 - Reworked the README into a public-release guide with installation, validated-model, workflow, metadata, and support information.

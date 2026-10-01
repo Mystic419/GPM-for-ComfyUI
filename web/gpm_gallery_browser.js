@@ -269,11 +269,13 @@ function getProfilePrompts(state, profileName) {
   return state.prompts[profileName];
 }
 
-app.registerExtension({
-  name: EXTENSION_NAME,
+function isGalleryBrowserNode(node) {
+  const values = [node?.comfyClass, node?.type, node?.title];
+  return values.some((value) => String(value || "") === NODE_NAME);
+}
 
-  async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== NODE_NAME) {
+function patchGalleryBrowserNodeDefinition(nodeType, nodeData) {
+    if (!nodeType?.prototype || nodeType.prototype.__gpmGalleryBrowserPatched || nodeData?.name !== NODE_NAME) {
       return;
     }
 
@@ -284,6 +286,10 @@ app.registerExtension({
 
     nodeType.prototype.onNodeCreated = function () {
       const result = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
+      if (this.__gpmGalleryBrowserInitialized) {
+        return result;
+      }
+      this.__gpmGalleryBrowserInitialized = true;
       injectStylesOnce();
       if (this?.id !== undefined && this?.id !== null) {
         this.__gpmNodeId = String(this.id);
@@ -1050,6 +1056,28 @@ app.registerExtension({
         this.setSize([size[0], desiredHeight]);
       }
     };
+    nodeType.prototype.__gpmGalleryBrowserPatched = true;
+}
+
+app.registerExtension({
+  name: EXTENSION_NAME,
+
+  async beforeRegisterNodeDef(nodeType, nodeData) {
+    patchGalleryBrowserNodeDefinition(nodeType, nodeData);
+  },
+
+  nodeCreated(node) {
+    if (!isGalleryBrowserNode(node)) {
+      return;
+    }
+
+    // Recent ComfyUI builds can create a workflow node before they call the
+    // legacy beforeRegisterNodeDef hook. Patch and initialize it here too.
+    const nodeType = node?.constructor;
+    patchGalleryBrowserNodeDefinition(nodeType, { name: NODE_NAME });
+    if (!node.__gpmGalleryBrowserInitialized && typeof node?.onNodeCreated === "function") {
+      node.onNodeCreated();
+    }
   },
 });
 
