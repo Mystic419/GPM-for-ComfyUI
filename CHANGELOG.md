@@ -4,6 +4,11 @@ All notable user-visible changes should be recorded here.
 
 ## Unreleased
 
+## 1.0.2 - 2026-09-30
+
+### Fixed
+- Debounced Gallery Browser DOM width updates during Nodes 2 drag-resizing to prevent visual flashing while still applying the final width after the drag settles.
+
 ## 1.0.1 - 2026-09-30
 
 ### Fixed
