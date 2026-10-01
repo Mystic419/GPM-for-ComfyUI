@@ -8,6 +8,7 @@ All notable user-visible changes should be recorded here.
 
 ### Fixed
 - Restored Gallery Browser initialization on current ComfyUI frontend builds where workflow nodes can be created before the legacy node-definition hook runs.
+- Kept the embedded Gallery Browser panel width synchronized when ComfyUI restores or changes a workflow node's saved size.
 
 ### Changed
 - Added an idempotent node-created fallback for the Gallery Browser frontend while retaining the legacy hook for older ComfyUI builds.

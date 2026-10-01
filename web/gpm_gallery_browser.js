@@ -543,6 +543,49 @@ function patchGalleryBrowserNodeDefinition(nodeType, nodeData) {
         hideOnZoom: false,
       });
 
+      const syncDomWidth = (nodeWidth) => {
+        const width = Number(nodeWidth);
+        if (!Number.isFinite(width) || width <= 0) {
+          return;
+        }
+        // ComfyUI can restore the node width after creating DOM widgets. Keep
+        // the browser panel in step with that restored width instead of leaving
+        // it at the small creation-time width.
+        const contentWidth = Math.max(260, Math.round(width - 20));
+        rootEl.style.width = `${contentWidth}px`;
+        rootEl.style.minWidth = `${contentWidth}px`;
+        rootEl.style.maxWidth = `${contentWidth}px`;
+      };
+      this.__gpmSyncGalleryDomWidth = syncDomWidth;
+
+      // Nodes 2 updates node.size while dragging, but does not consistently
+      // call the legacy onResize hook used by canvas nodes. Watch the model
+      // width, but wait for the drag to settle before changing DOM layout.
+      let lastObservedNodeWidth = 0;
+      let widthSyncTimer = null;
+      const scheduleDomWidthSync = (nodeWidth) => {
+        if (widthSyncTimer !== null) {
+          clearTimeout(widthSyncTimer);
+        }
+        widthSyncTimer = setTimeout(() => {
+          widthSyncTimer = null;
+          syncDomWidth(nodeWidth);
+        }, 80);
+      };
+      const watchNodeWidth = () => {
+        const graphNodes = this.graph?._nodes;
+        if (Array.isArray(graphNodes) && !graphNodes.includes(this)) {
+          return;
+        }
+        const nodeWidth = Number(this.size?.[0]);
+        if (Number.isFinite(nodeWidth) && Math.round(nodeWidth) !== lastObservedNodeWidth) {
+          lastObservedNodeWidth = Math.round(nodeWidth);
+          scheduleDomWidthSync(nodeWidth);
+        }
+        this.__gpmGalleryDomWidthFrame = requestAnimationFrame(watchNodeWidth);
+      };
+      this.__gpmGalleryDomWidthFrame = requestAnimationFrame(watchNodeWidth);
+
       const applyRowsLayout = (resizeNode = true) => {
         const rows = clampVisibleRows(state.visibleRows);
         state.visibleRows = rows;
@@ -554,12 +597,16 @@ function patchGalleryBrowserNodeDefinition(nodeType, nodeData) {
 
         const desiredHeight = calculateNodeHeight(rows);
         this.__gpmDesiredHeight = desiredHeight;
-        domWidget.computeSize = (width) => [width, this.__gpmDesiredHeight];
+        domWidget.computeSize = (width) => {
+          syncDomWidth(width);
+          return [width, this.__gpmDesiredHeight];
+        };
 
         const contentHeight = desiredHeight - NODE_CHROME_HEIGHT;
         rootEl.style.height = `${contentHeight}px`;
         rootEl.style.minHeight = `${contentHeight}px`;
         rootEl.style.maxHeight = `${contentHeight}px`;
+        syncDomWidth(this.size?.[0]);
 
         if (!resizeNode || !this.setSize || !Array.isArray(this.size)) {
           return;
@@ -1036,6 +1083,10 @@ function patchGalleryBrowserNodeDefinition(nodeType, nodeData) {
     nodeType.prototype.onResize = function (size) {
       if (onResize) {
         onResize.apply(this, arguments);
+      }
+
+      if (Array.isArray(size) && size.length >= 1 && typeof this.__gpmSyncGalleryDomWidth === "function") {
+        this.__gpmSyncGalleryDomWidth(size[0]);
       }
 
       if (this.__gpmApplyingSize) {
